@@ -121,7 +121,8 @@ void drawMarketPanel(int idx) {
     lcd.setTextSize(1);
     lcd.setTextColor(m.accentColor, C_PANEL);
     lcd.setTextDatum(lgfx::top_center);
-    lcd.drawString(m.label, cx, y + 3);
+    // Label: Font2 ~14px tall, 2px top margin → occupies y+2..y+16
+    lcd.drawString(m.label, cx, y + 2);
 
     if (!m.fetched) {
         lcd.setTextColor(C_MUTED, C_PANEL);
@@ -136,24 +137,21 @@ void drawMarketPanel(int idx) {
         return;
     }
 
+    // Price: Font4 ~26px tall, starts at y+18 → occupies y+18..y+44
     char priceBuf[12];
     fmtPrice(priceBuf, sizeof(priceBuf), m.price);
     lcd.setFont(&fonts::Font4);
     lcd.setTextColor(C_PRICE, C_PANEL);
     lcd.setTextDatum(lgfx::top_center);
-    lcd.drawString(priceBuf, cx, y + 14);
+    lcd.drawString(priceBuf, cx, y + 18);
 
+    // Change %: Font2, starts at y+46 → occupies y+46..y+60 (panel ends at y+63)
     char changeBuf[10];
     snprintf(changeBuf, sizeof(changeBuf), "%+.2f%%", m.changePct);
     lcd.setFont(&fonts::Font2);
     lcd.setTextColor(m.changePct >= 0 ? C_UP : C_DOWN, C_PANEL);
     lcd.setTextDatum(lgfx::top_center);
-    lcd.drawString(changeBuf, cx, y + 33);
-
-    char openBuf[12];
-    fmtOpen(openBuf, sizeof(openBuf), m.openPrice);
-    lcd.setTextColor(C_LABEL, C_PANEL);
-    lcd.drawString(openBuf, cx, y + 47);
+    lcd.drawString(changeBuf, cx, y + 46);
 }
 
 void drawAllMarkets() {
@@ -175,9 +173,9 @@ void drawProgress() {
     // Uses integer arithmetic to avoid float on ESP32 hot path
     auto xAt = [](int m) -> int { return (int)((long)m * W / MKT_DAY_MINS); };
 
-    // ── Segment bar (top, 9px) ────────────────────────────────────────────────
-    const int by = PRG_Y + 1;
-    const int bh = 9;
+    // ── Segment bar (top, 8px) — sits flush at PRG_Y ────────────────────────
+    const int by = PRG_Y;
+    const int bh = 8;
 
     // Each segment: [start_min, end_min, dim_color, active_color]
     struct Seg { int s, e; uint32_t dim, bright; } segs[5] = {
@@ -205,10 +203,10 @@ void drawProgress() {
     if (!weekend) {
         int cx = xAt(curMin);
         if (cx > 0 && cx < W - 1)
-            lcd.drawFastVLine(cx, by - 1, bh + 2, 0xFFFFFF);
+            lcd.drawFastVLine(cx, by, bh, 0xFFFFFF);
     }
 
-    // ── Status label (bottom, Font2) ──────────────────────────────────────────
+    // ── Status label: Font2 ~14px, starts at PRG_Y+9 → ends at PRG_Y+23 = 170 (fits) ──
     char     label[32];
     uint32_t labelColor;
 
@@ -244,7 +242,7 @@ void drawProgress() {
     lcd.setTextSize(1);
     lcd.setTextColor(labelColor, C_BG);
     lcd.setTextDatum(lgfx::top_center);
-    lcd.drawString(label, W / 2, PRG_Y + 12);
+    lcd.drawString(label, W / 2, PRG_Y + 9);
 }
 
 void drawAll() {

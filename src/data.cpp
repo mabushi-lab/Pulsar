@@ -18,8 +18,8 @@ MarketItem markets[MARKET_COUNT] = {
     { "STOXX 50",  "%5ESTOXX50E",  0x33CCFF, 0, 0, 0, false, false },
     { "Emrg Mkt",  "EMIM.AS",      0x33CCFF, 0, 0, 0, false, false },
     { "All World", "VWCE.DE",      0x44BBFF, 0, 0, 0, false, false },
-    { "Gold",      "XAUEUR%3DX",   0xFFAA33, 0, 0, 0, false, false },
-    { "Silver",    "XAGEUR%3DX",   0xCCDDEE, 0, 0, 0, false, false },
+    { "Gold",      "XAUEUR=X",     0xFFAA33, 0, 0, 0, false, false },
+    { "Silver",    "XAGEUR=X",     0xCCDDEE, 0, 0, 0, false, false },
 };
 
 float tempC    = 0.0f;
@@ -112,17 +112,22 @@ void fetchMarkets() {
         markets[i].ok      = false;
 
         if (http.GET() == HTTP_CODE_OK) {
-            // Filter keeps only the two meta fields we need — discards large
-            // timestamp and indicator arrays before they hit the heap.
+            // Filter keeps only the meta fields we need.
+            // Yahoo Finance uses "chartPreviousClose" (not "previousClose") in v8/chart.
             JsonDocument filter;
-            filter["chart"]["result"][0]["meta"]["regularMarketPrice"] = true;
-            filter["chart"]["result"][0]["meta"]["previousClose"]      = true;
+            filter["chart"]["result"][0]["meta"]["regularMarketPrice"]        = true;
+            filter["chart"]["result"][0]["meta"]["chartPreviousClose"]        = true;
+            filter["chart"]["result"][0]["meta"]["previousClose"]             = true;
+            filter["chart"]["result"][0]["meta"]["regularMarketPreviousClose"]= true;
 
             JsonDocument doc;
             if (!deserializeJson(doc, http.getString(),
                                  DeserializationOption::Filter(filter))) {
                 float price = doc["chart"]["result"][0]["meta"]["regularMarketPrice"].as<float>();
-                float prev  = doc["chart"]["result"][0]["meta"]["previousClose"].as<float>();
+                // Try each field name Yahoo Finance uses across instrument types
+                float prev  = doc["chart"]["result"][0]["meta"]["chartPreviousClose"].as<float>();
+                if (prev <= 0) prev = doc["chart"]["result"][0]["meta"]["previousClose"].as<float>();
+                if (prev <= 0) prev = doc["chart"]["result"][0]["meta"]["regularMarketPreviousClose"].as<float>();
                 if (price > 0) {
                     markets[i].price     = price;
                     markets[i].openPrice = prev;   // stores previous close

@@ -13,12 +13,12 @@ const int H      = 170;
 const int HDR_H  = 18;
 const int DIV1_Y = 18;
 const int ROW1_Y = 19;
-const int ROW_H  = 64;
-const int DIV2_Y = 83;
-const int ROW2_Y = 84;
-const int DIV3_Y = 148;
-const int PRG_Y  = 149;
-const int PRG_H  = 21;
+const int ROW_H  = 63;   // Font4 is ~26px; 63px fits label+price+change cleanly
+const int DIV2_Y = 82;
+const int ROW2_Y = 83;
+const int DIV3_Y = 146;
+const int PRG_Y  = 147;
+const int PRG_H  = 23;   // 8px bar + 1px gap + 14px Font2 label = 23px
 
 // ── Weather location ──────────────────────────────────────────────────────────
 const float WEATHER_LAT = 50.8798f;  // Leuven, Belgium
