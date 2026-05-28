@@ -1,11 +1,17 @@
 #pragma once
 
-// All drawing goes through these functions — the LGFX/lcd instance is private
-// to display.cpp and never exposed directly.
-
 void displayInit();
 void displaySetBrightness(bool full);
-void drawSplash(const char* msg);
+
+// ── Boot sequence ─────────────────────────────────────────────────────────────
+void animSplash();       // typewriter title + "connecting" before WiFi
+void animRevealMain();   // staggered panel reveal after WiFi connects
+
+// ── Runtime animations ────────────────────────────────────────────────────────
+void triggerPanelFlash(int idx);  // call before drawAllMarkets() on each fetch
+void animTick();                  // call every loop iteration
+
+// ── Draw primitives ───────────────────────────────────────────────────────────
 void drawHeader();
 void drawMarketPanel(int idx);
 void drawAllMarkets();

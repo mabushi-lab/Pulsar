@@ -37,21 +37,22 @@ void setup() {
     pinMode(BTN_USER, INPUT_PULLUP);
 
     displayInit();
-    drawSplash("Connecting...");
+    animSplash();    // typewriter title + "connecting" screen
 
     connectWiFi();
     setupServer();
-    drawAll();
+
+    animRevealMain();  // staggered panel reveal instead of instant drawAll()
 }
 
 void loop() {
     checkButtons();
     server.handleClient();
+    animTick();  // handles panel flash expiry at ~30 fps
 
     static uint32_t lastSec     = 0;
     static uint32_t lastWeather = 0;
     static uint32_t lastMarkets = 0;
-    static int      lastPct     = -1;
     static bool     wifiWas     = (WiFi.status() == WL_CONNECTED);
 
     uint32_t now    = millis();
@@ -63,37 +64,37 @@ void loop() {
         if (now - lastRetry > 30000) {
             lastRetry = now;
             connectWiFi();
-            if (WiFi.status() == WL_CONNECTED) { drawAll(); wifiWas = true; }
+            if (WiFi.status() == WL_CONNECTED) { animRevealMain(); wifiWas = true; }
             else                                  drawHeader();
         }
         return;
     }
-    if (!wifiWas) { wifiWas = true; drawAll(); }
+    if (!wifiWas) { wifiWas = true; animRevealMain(); }
 
     // Manual market refresh via USER button or POST /refresh
     if (refreshRequested) {
         refreshRequested = false;
         lastMarkets = now;
         fetchMarkets();
+        for (int i = 0; i < MARKET_COUNT; i++) triggerPanelFlash(i);
         drawAllMarkets();
         drawDividers();
     }
 
-    // 1-second tick: header (once/min) + progress bar (when % changes)
+    // 1-second tick
     if (now - lastSec >= 1000) {
         lastSec = now;
         ntp.update();
+        drawHeader();  // every second — drives colon blink + WiFi breathe
+    }
 
-        if (ntp.getSeconds() == 0) {
-            drawHeader();
-            drawDividers();
-        }
-
+    // Progress bar — only redraws when the minute changes
+    {
         time_t     epoch = ntp.getEpochTime();
         struct tm *t     = localtime(&epoch);
-        int        secs  = t->tm_hour * 3600 + t->tm_min * 60 + t->tm_sec;
-        int        pct   = (int)((long)secs * 100 / 86400);
-        if (pct != lastPct) { lastPct = pct; drawProgress(); }
+        static int lastMin = -1;
+        int        curMin  = t->tm_hour * 60 + t->tm_min;
+        if (curMin != lastMin) { lastMin = curMin; drawProgress(); }
     }
 
     // Weather — every 10 minutes
@@ -101,13 +102,13 @@ void loop() {
         lastWeather = now;
         fetchWeather();
         drawHeader();
-        drawDividers();
     }
 
     // Markets — every 5 minutes
     if (lastMarkets == 0 || now - lastMarkets >= 300000UL) {
         lastMarkets = now;
         fetchMarkets();
+        for (int i = 0; i < MARKET_COUNT; i++) triggerPanelFlash(i);
         drawAllMarkets();
         drawDividers();
     }
