@@ -242,7 +242,7 @@ static void connectWiFi() {
 
 // ── HTTP handlers ─────────────────────────────────────────────────────────────
 static void onRoot() {
-    server.send(200, "text/html", R"(<!DOCTYPE html>
+    server.send(200, "text/html", R"HTML(<!DOCTYPE html>
 <html><head><title>Plusar</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
@@ -257,7 +257,7 @@ static void onRoot() {
 <script>
 function set(){fetch('/status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:document.getElementById('m').value})});}
 function clr(){fetch('/status/clear',{method:'POST'});}
-</script></body></html>)");
+</script></body></html>)HTML");
 }
 
 static void onStatusPost() {
