@@ -18,12 +18,10 @@ MarketItem markets[MARKET_COUNT] = {
     { "STOXX 50",  "%5ESTOXX50E",  0x33CCFF, 0, 0, 0, false, false },
     { "Emrg Mkt",  "EMIM.AS",      0x33CCFF, 0, 0, 0, false, false },
     { "All World", "VWCE.DE",      0x44BBFF, 0, 0, 0, false, false },
-    // XAUEUR=X / XAGEUR=X fail because '=' in a URL path confuses the ESP32
-    // HTTPClient. Use Xetra-listed physical ETCs (EUR, no '=' in ticker).
-    //   EXS1.DE = iShares Physical Gold ETC  (Xetra, EUR)
-    //   PHAG.DE = WisdomTree Physical Silver ETC (Xetra, EUR)
+    // EXS1.DE = iShares Physical Gold ETC  (Xetra, EUR) — confirmed working
+    // XAGG.DE = Xtrackers Physical Silver ETC (Xetra, EUR) — DWS/Deutsche Bank suite
     { "Gold",      "EXS1.DE",      0xFFAA33, 0, 0, 0, false, false },
-    { "Silver",    "PHAG.DE",      0xCCDDEE, 0, 0, 0, false, false },
+    { "Silver",    "XAGG.DE",      0xCCDDEE, 0, 0, 0, false, false },
 };
 
 float tempC    = 0.0f;
@@ -115,7 +113,9 @@ void fetchMarkets() {
         markets[i].fetched = true;
         markets[i].ok      = false;
 
-        if (http.GET() == HTTP_CODE_OK) {
+        int httpCode = http.GET();
+        Serial.printf("[fetch] %-12s  HTTP %d\n", markets[i].symbol, httpCode);
+        if (httpCode == HTTP_CODE_OK) {
             // Filter keeps only the meta fields we need.
             // Yahoo Finance uses "chartPreviousClose" (not "previousClose") in v8/chart.
             JsonDocument filter;
@@ -132,9 +132,10 @@ void fetchMarkets() {
                 float prev  = doc["chart"]["result"][0]["meta"]["chartPreviousClose"].as<float>();
                 if (prev <= 0) prev = doc["chart"]["result"][0]["meta"]["previousClose"].as<float>();
                 if (prev <= 0) prev = doc["chart"]["result"][0]["meta"]["regularMarketPreviousClose"].as<float>();
+                Serial.printf("           price=%.4f  prev=%.4f\n", price, prev);
                 if (price > 0) {
                     markets[i].price     = price;
-                    markets[i].openPrice = prev;   // stores previous close
+                    markets[i].openPrice = prev;
                     markets[i].changePct = (prev > 0)
                         ? (price - prev) / prev * 100.0f : 0;
                     markets[i].ok = true;
