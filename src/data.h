@@ -5,7 +5,7 @@
 // ── Market data ───────────────────────────────────────────────────────────────
 struct MarketItem {
     const char* label;
-    const char* stooqSym;   // raw symbol — ^ encoded in fetch URL
+    const char* symbol;     // URL-encoded Yahoo Finance symbol (^ → %5E, = → %3D)
     uint32_t    accentColor;
     float       price;
     float       openPrice;

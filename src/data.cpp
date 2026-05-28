@@ -5,13 +5,15 @@
 #include <ArduinoJson.h>
 
 // ── State ─────────────────────────────────────────────────────────────────────
+// symbol field stores the URL-encoded Yahoo Finance symbol used in fetch URLs.
+// ^ → %5E   = → %3D
 MarketItem markets[MARKET_COUNT] = {
-    { "S&P 500",  "^spx",    0x33CCFF, 0, 0, 0, false, false },
-    { "STOXX 50", "^sx5e",   0x33CCFF, 0, 0, 0, false, false },
-    { "Emrg Mkt", "eem.us",  0x33CCFF, 0, 0, 0, false, false },
-    { "Gold",     "xauusd",  0xFFAA33, 0, 0, 0, false, false },
-    { "Silver",   "xagusd",  0xCCDDEE, 0, 0, 0, false, false },
-    { "Bitcoin",  "btcusd",  0xF7931A, 0, 0, 0, false, false },
+    { "S&P 500",  "%5EGSPC",     0x33CCFF, 0, 0, 0, false, false },
+    { "STOXX 50", "%5ESTOXX50E", 0x33CCFF, 0, 0, 0, false, false },
+    { "Emrg Mkt", "EEM",         0x33CCFF, 0, 0, 0, false, false },
+    { "All World", "ACWI",       0x44BBFF, 0, 0, 0, false, false },
+    { "Gold",     "GC%3DF",      0xFFAA33, 0, 0, 0, false, false },
+    { "Silver",   "SI%3DF",      0xCCDDEE, 0, 0, 0, false, false },
 };
 
 float tempC    = 0.0f;
@@ -48,38 +50,14 @@ void fmtPrice(char* buf, size_t n, float price) {
     }
 }
 
+// Shows previous-close reference price with "pc:" prefix
 void fmtOpen(char* buf, size_t n, float price) {
     if (price >= 1000)
-        snprintf(buf, n, "o:%ld", lroundf(price));
+        snprintf(buf, n, "pc:%ld", lroundf(price));
     else if (price >= 100)
-        snprintf(buf, n, "o:%.1f", price);
+        snprintf(buf, n, "pc:%.1f", price);
     else
-        snprintf(buf, n, "o:%.2f", price);
-}
-
-// Extract the Nth comma-separated field from a stooq CSV line
-static float csvFloat(const String& line, int field) {
-    int pos = 0;
-    for (int i = 0; i < field; i++) {
-        pos = line.indexOf(',', pos);
-        if (pos < 0) return 0;
-        pos++;
-    }
-    int end = line.indexOf(',', pos);
-    if (end < 0) end = line.length();
-    return line.substring(pos, end).toFloat();
-}
-
-static String csvStr(const String& line, int field) {
-    int pos = 0;
-    for (int i = 0; i < field; i++) {
-        pos = line.indexOf(',', pos);
-        if (pos < 0) return "";
-        pos++;
-    }
-    int end = line.indexOf(',', pos);
-    if (end < 0) end = line.length();
-    return line.substring(pos, end);
+        snprintf(buf, n, "pc:%.2f", price);
 }
 
 // ── Fetch ─────────────────────────────────────────────────────────────────────
@@ -105,67 +83,49 @@ void fetchWeather() {
     wxFetched = true;
 }
 
-// Single HTTPS request fetches all 6 symbols from Stooq CSV API.
-// CSV columns: Symbol(0), Date(1), Time(2), Open(3), High(4), Low(5), Close(6), Volume(7)
-// changePct is intraday (close vs open) — the most recent trading session.
+// Yahoo Finance v8/chart — one HTTPS request per symbol.
+// Extracts regularMarketPrice and previousClose from the meta block.
+// changePct is day-over-day (price vs yesterday's close).
 void fetchMarkets() {
-    const char* url =
-        "https://stooq.com/q/l/"
-        "?s=%5Espx,%5Esx5e,eem.us,xauusd,xagusd,btcusd"
-        "&f=sd2t2ohlcv&h&e=csv";
-
     WiFiClientSecure client;
     client.setInsecure();
-    HTTPClient http;
-    http.setTimeout(10000);
-    http.begin(client, url);
-    http.addHeader("User-Agent", "Mozilla/5.0");
 
-    bool   ok  = (http.GET() == HTTP_CODE_OK);
-    String csv = ok ? http.getString() : "";
-    http.end();
+    for (int i = 0; i < MARKET_COUNT; i++) {
+        char url[128];
+        snprintf(url, sizeof(url),
+            "https://query1.finance.yahoo.com/v8/finance/chart/%s?interval=1d&range=1d",
+            markets[i].symbol);
 
-    for (int i = 0; i < MARKET_COUNT; i++) markets[i].fetched = true;
+        HTTPClient http;
+        http.setTimeout(8000);
+        http.begin(client, url);
+        http.addHeader("User-Agent", "Mozilla/5.0 (compatible)");
+        http.addHeader("Accept",     "application/json");
 
-    if (!ok || csv.length() < 10) {
-        for (int i = 0; i < MARKET_COUNT; i++) markets[i].ok = false;
-        return;
-    }
+        markets[i].fetched = true;
+        markets[i].ok      = false;
 
-    // Skip the header row
-    int lineStart = csv.indexOf('\n');
-    if (lineStart < 0) return;
-    lineStart++;
+        if (http.GET() == HTTP_CODE_OK) {
+            // Filter keeps only the two meta fields we need — discards large
+            // timestamp and indicator arrays before they hit the heap.
+            JsonDocument filter;
+            filter["chart"]["result"][0]["meta"]["regularMarketPrice"] = true;
+            filter["chart"]["result"][0]["meta"]["previousClose"]      = true;
 
-    while (lineStart < (int)csv.length()) {
-        int    lineEnd = csv.indexOf('\n', lineStart);
-        if (lineEnd < 0) lineEnd = csv.length();
-        String line = csv.substring(lineStart, lineEnd);
-        line.trim();
-
-        if (line.length() > 10) {
-            String sym = csvStr(line, 0);
-            sym.replace("^", "");
-            sym.toUpperCase();
-
-            float openVal  = csvFloat(line, 3);
-            float closeVal = csvFloat(line, 6);
-
-            for (int i = 0; i < MARKET_COUNT; i++) {
-                String mSym = String(markets[i].stooqSym);
-                mSym.replace("^", "");
-                mSym.toUpperCase();
-
-                if (sym == mSym && closeVal > 0) {
-                    markets[i].price     = closeVal;
-                    markets[i].openPrice = openVal;
-                    markets[i].changePct = (openVal > 0)
-                        ? (closeVal - openVal) / openVal * 100.0f : 0;
+            JsonDocument doc;
+            if (!deserializeJson(doc, http.getString(),
+                                 DeserializationOption::Filter(filter))) {
+                float price = doc["chart"]["result"][0]["meta"]["regularMarketPrice"].as<float>();
+                float prev  = doc["chart"]["result"][0]["meta"]["previousClose"].as<float>();
+                if (price > 0) {
+                    markets[i].price     = price;
+                    markets[i].openPrice = prev;   // stores previous close
+                    markets[i].changePct = (prev > 0)
+                        ? (price - prev) / prev * 100.0f : 0;
                     markets[i].ok = true;
-                    break;
                 }
             }
         }
-        lineStart = lineEnd + 1;
+        http.end();
     }
 }
