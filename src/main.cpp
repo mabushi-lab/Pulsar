@@ -1,4 +1,4 @@
-// Plusar — Desk Dashboard
+// Plusar — Market Dashboard
 #include <LovyanGFX.hpp>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -31,7 +31,7 @@ public:
             cfg.panel_width     = 170;
             cfg.panel_height    = 320;
             cfg.offset_x        = 35;
-            cfg.offset_rotation = 1;  // landscape by default
+            cfg.offset_rotation = 1;
             cfg.invert          = true;
             cfg.readable        = false;
             cfg.rgb_order       = false;
@@ -52,8 +52,7 @@ public:
     }
 };
 
-static LGFX        lcd;
-static LGFX_Sprite clockSprite(&lcd);
+static LGFX lcd;
 
 // ── Pins ──────────────────────────────────────────────────────────────────────
 static const int PIN_POWER = 15;
@@ -61,63 +60,73 @@ static const int BTN_BOOT  = 0;
 static const int BTN_USER  = 14;
 
 // ── Layout (landscape 320×170) ────────────────────────────────────────────────
-// Row boundaries
+// Header (18px) | div | Row1 (64px) | div | Row2 (64px) | div | Progress (21px)
 static const int W       = 320;
 static const int H       = 170;
-static const int HDR_H   = 20;   // header bar
-static const int DIV1_Y  = 20;
-static const int CLK_Y   = 21;   // clock sprite top
-static const int CLK_H   = 57;   // Font7=48px + 9px breathing room
-static const int DIV2_Y  = 78;
-static const int PNL_Y   = 79;   // three-panel row top
-static const int PNL_H   = 65;
-static const int DIV3_Y  = 144;
-static const int PRG_Y   = 145;  // day-progress bar
-static const int PRG_H   = 25;
+static const int HDR_H   = 18;
+static const int DIV1_Y  = 18;
+static const int ROW1_Y  = 19;
+static const int ROW_H   = 64;
+static const int DIV2_Y  = 83;
+static const int ROW2_Y  = 84;
+static const int DIV3_Y  = 148;
+static const int PRG_Y   = 149;
+static const int PRG_H   = 21;
 
-// Panel columns — x=107 and x=212 are the 1-px vertical dividers
-static const int PA_X = 0,   PA_W = 107;  // weather
-static const int PB_X = 108, PB_W = 104;  // crypto
-static const int PC_X = 213, PC_W = 107;  // status
+// Three columns: x=107 and x=212 are the 1-px vertical dividers
+static const int COL_X[3] = { 0,   108, 213 };
+static const int COL_W[3] = { 107, 104, 107 };
 
 // ── Colours ───────────────────────────────────────────────────────────────────
 static const uint32_t C_BG       = 0x06080F;
 static const uint32_t C_HDR      = 0x0B1420;
 static const uint32_t C_PANEL    = 0x080C18;
 static const uint32_t C_DIV      = 0x1E3A52;
-static const uint32_t C_CLOCK    = 0xEEF2FF;
-static const uint32_t C_CLK_SEC  = 0x445566;  // dimmed seconds
+static const uint32_t C_PRICE    = 0xEEF2FF;
 static const uint32_t C_DATE     = 0x7A93AC;
 static const uint32_t C_LABEL    = 0x3D5A73;
-static const uint32_t C_WEATHER  = 0xFFAA33;
-static const uint32_t C_CRYPTO   = 0xF7931A;
-static const uint32_t C_STATUS   = 0x33CCFF;
+static const uint32_t C_UP       = 0x00CC55;
+static const uint32_t C_DOWN     = 0xFF3344;
 static const uint32_t C_MUTED    = 0x2A3F52;
+static const uint32_t C_WEATHER  = 0xFFAA33;
 static const uint32_t C_WIFI_OK  = 0x00CC44;
 static const uint32_t C_WIFI_ERR = 0xFF3333;
 
-// ── State ─────────────────────────────────────────────────────────────────────
-static float  tempC     = 0.0f;
-static int    wxCode    = -1;
-static int    humidity  = -1;
-static float  windKmh   = 0.0f;
-static bool   wxFetched = false;   // true after first attempt (success or fail)
+// ── Market data ───────────────────────────────────────────────────────────────
+struct MarketItem {
+    const char* label;
+    const char* stooqSym;   // raw symbol — ^ will be encoded in URL
+    uint32_t    accentColor;
+    float       price;
+    float       openPrice;
+    float       changePct;
+    bool        fetched;    // true after first attempt (ok or fail)
+    bool        ok;
+};
 
-static long   btcUsd    = -1;
-static bool   btcFetched = false;  // same pattern
+static MarketItem markets[6] = {
+    { "S&P 500",  "^spx",    0x33CCFF, 0, 0, 0, false, false },
+    { "STOXX 50", "^sx5e",   0x33CCFF, 0, 0, 0, false, false },
+    { "Emrg Mkt", "eem.us",  0x33CCFF, 0, 0, 0, false, false },
+    { "Gold",     "xauusd",  0xFFAA33, 0, 0, 0, false, false },
+    { "Silver",   "xagusd",  0xCCDDEE, 0, 0, 0, false, false },
+    { "Bitcoin",  "btcusd",  0xF7931A, 0, 0, 0, false, false },
+};
 
-static String statusMsg = "";
-static bool   hasStatus = false;
-static bool   fullBright = true;
+// ── Weather state ─────────────────────────────────────────────────────────────
+static float tempC    = 0.0f;
+static int   wxCode   = -1;
+static bool  wxFetched = false;
 
 // ── NTP / server ──────────────────────────────────────────────────────────────
 static WiFiUDP   ntpUdp;
 static NTPClient ntp(ntpUdp, "pool.ntp.org", UTC_OFFSET_SEC);
 static WebServer server(80);
+static bool      fullBright = true;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 static const char* wmoDesc(int code) {
-    if (code == 0)  return "Clear Sky";
+    if (code == 0)  return "Clear";
     if (code <= 2)  return "Mainly Clear";
     if (code == 3)  return "Overcast";
     if (code <= 48) return "Foggy";
@@ -131,24 +140,65 @@ static const char* wmoDesc(int code) {
     return "Unknown";
 }
 
-static void fmtPrice(char* buf, size_t n, long price) {
-    if (price >= 1000000)
-        snprintf(buf, n, "$%ld,%03ld,%03ld",
-                 price / 1000000, (price / 1000) % 1000, price % 1000);
-    else if (price >= 1000)
-        snprintf(buf, n, "$%ld,%03ld", price / 1000, price % 1000);
+// Format a market price for Font4 display
+static void fmtPrice(char* buf, size_t n, float price) {
+    if (price >= 10000) {
+        long p = lroundf(price);
+        snprintf(buf, n, "%ld,%03ld", p / 1000, p % 1000);
+    } else if (price >= 1000) {
+        long p = lroundf(price);
+        snprintf(buf, n, "%ld,%03ld", p / 1000, p % 1000);
+    } else if (price >= 100) {
+        snprintf(buf, n, "%.1f", price);
+    } else {
+        snprintf(buf, n, "%.2f", price);
+    }
+}
+
+// Format open price as short "o:XXXX" label for Font2
+static void fmtOpen(char* buf, size_t n, float price) {
+    if (price >= 1000)
+        snprintf(buf, n, "o:%ld", lroundf(price));
+    else if (price >= 100)
+        snprintf(buf, n, "o:%.1f", price);
     else
-        snprintf(buf, n, "$%ld", price);
+        snprintf(buf, n, "o:%.2f", price);
+}
+
+// Extract the Nth comma-separated field from a CSV line
+static float csvFloat(const String& line, int fieldIdx) {
+    int pos = 0;
+    for (int i = 0; i < fieldIdx; i++) {
+        pos = line.indexOf(',', pos);
+        if (pos < 0) return 0;
+        pos++;
+    }
+    int end = line.indexOf(',', pos);
+    if (end < 0) end = line.length();
+    return line.substring(pos, end).toFloat();
+}
+
+static String csvStr(const String& line, int fieldIdx) {
+    int pos = 0;
+    for (int i = 0; i < fieldIdx; i++) {
+        pos = line.indexOf(',', pos);
+        if (pos < 0) return "";
+        pos++;
+    }
+    int end = line.indexOf(',', pos);
+    if (end < 0) end = line.length();
+    return line.substring(pos, end);
 }
 
 // ── Drawing ───────────────────────────────────────────────────────────────────
-
 static void drawDividers() {
     lcd.drawFastHLine(0, DIV1_Y, W, C_DIV);
     lcd.drawFastHLine(0, DIV2_Y, W, C_DIV);
     lcd.drawFastHLine(0, DIV3_Y, W, C_DIV);
-    lcd.drawFastVLine(107, PNL_Y, PNL_H, C_DIV);
-    lcd.drawFastVLine(212, PNL_Y, PNL_H, C_DIV);
+    lcd.drawFastVLine(107, ROW1_Y, ROW_H, C_DIV);
+    lcd.drawFastVLine(212, ROW1_Y, ROW_H, C_DIV);
+    lcd.drawFastVLine(107, ROW2_Y, ROW_H, C_DIV);
+    lcd.drawFastVLine(212, ROW2_Y, ROW_H, C_DIV);
 }
 
 static void drawHeader() {
@@ -156,165 +206,82 @@ static void drawHeader() {
 
     time_t     epoch = ntp.getEpochTime();
     struct tm *t     = localtime(&epoch);
-    char       dateBuf[24];
-    strftime(dateBuf, sizeof(dateBuf), "%a, %b %d  %Y", t);
+    char       tdBuf[24];
+    strftime(tdBuf, sizeof(tdBuf), "%H:%M  %a %b %d", t);
 
     lcd.setFont(&fonts::Font2);
     lcd.setTextSize(1);
     lcd.setTextColor(C_DATE, C_HDR);
     lcd.setTextDatum(lgfx::middle_left);
-    lcd.drawString(dateBuf, 5, HDR_H / 2);
+    lcd.drawString(tdBuf, 5, HDR_H / 2);
 
-    // Weather summary — centre of header
+    bool wifiOk = (WiFi.status() == WL_CONNECTED);
+    lcd.fillCircle(W - 6, HDR_H / 2, 3, wifiOk ? C_WIFI_OK : C_WIFI_ERR);
+
     if (wxCode >= 0) {
-        char wx[32];
+        char wx[22];
         snprintf(wx, sizeof(wx), "%.1f%cC  %s", tempC, '\xB0', wmoDesc(wxCode));
         lcd.setTextColor(C_WEATHER, C_HDR);
-        lcd.setTextDatum(lgfx::middle_center);
-        lcd.drawString(wx, W / 2, HDR_H / 2);
+        lcd.setTextDatum(lgfx::middle_right);
+        lcd.drawString(wx, W - 14, HDR_H / 2);
     }
-
-    // WiFi status dot — top-right
-    bool ok = (WiFi.status() == WL_CONNECTED);
-    lcd.fillCircle(W - 8, HDR_H / 2, 4, ok ? C_WIFI_OK : C_WIFI_ERR);
 }
 
-static void drawClock() {
-    clockSprite.fillSprite(C_BG);
-    clockSprite.setFont(&fonts::Font7);
-    clockSprite.setTextSize(1);
+static void drawMarketPanel(int idx) {
+    const MarketItem& m = markets[idx];
+    int col = idx % 3;
+    int x   = COL_X[col];
+    int w   = COL_W[col];
+    int y   = (idx < 3) ? ROW1_Y : ROW2_Y;
+    int cx  = x + w / 2;
 
-    char hm[7], sec[4];
-    snprintf(hm,  sizeof(hm),  "%02d:%02d", ntp.getHours(), ntp.getMinutes());
-    snprintf(sec, sizeof(sec), ":%02d", ntp.getSeconds());
+    lcd.fillRect(x, y, w, ROW_H, C_PANEL);
 
-    // HH:MM bright, :SS dimmed — compute widths for manual positioning
-    int hmW  = clockSprite.textWidth(hm);
-    int secW = clockSprite.textWidth(sec);
-    int startX = (W - hmW - secW) / 2;
-
-    clockSprite.setTextDatum(lgfx::middle_left);
-    clockSprite.setTextColor(C_CLOCK);
-    clockSprite.drawString(hm, startX, CLK_H / 2);
-    clockSprite.setTextColor(C_CLK_SEC);
-    clockSprite.drawString(sec, startX + hmW, CLK_H / 2);
-
-    clockSprite.pushSprite(0, CLK_Y);
-}
-
-static void drawWeatherPanel() {
-    int cx = PA_X + PA_W / 2;
-    lcd.fillRect(PA_X, PNL_Y, PA_W, PNL_H, C_PANEL);
-
+    // Label — accent colour
     lcd.setFont(&fonts::Font2);
     lcd.setTextSize(1);
-    lcd.setTextColor(C_LABEL, C_PANEL);
+    lcd.setTextColor(m.accentColor, C_PANEL);
     lcd.setTextDatum(lgfx::top_center);
-    lcd.drawString("WEATHER", cx, PNL_Y + 3);
+    lcd.drawString(m.label, cx, y + 3);
 
-    if (!wxFetched) {
+    if (!m.fetched) {
         lcd.setTextColor(C_MUTED, C_PANEL);
         lcd.setTextDatum(lgfx::middle_center);
-        lcd.drawString("Fetching...", cx, PNL_Y + PNL_H / 2);
+        lcd.drawString("Loading...", cx, y + ROW_H / 2);
         return;
     }
-    if (wxCode < 0) {
-        lcd.setTextColor(C_WIFI_ERR, C_PANEL);
+    if (!m.ok) {
+        lcd.setTextColor(C_DOWN, C_PANEL);
         lcd.setTextDatum(lgfx::middle_center);
-        lcd.drawString("Offline", cx, PNL_Y + PNL_H / 2);
+        lcd.drawString("Offline", cx, y + ROW_H / 2);
         return;
     }
 
-    // Temperature — Font4, amber
-    char tempBuf[12];
-    snprintf(tempBuf, sizeof(tempBuf), "%.1f%cC", tempC, '\xB0');
+    // Price — Font4, near-white
+    char priceBuf[12];
+    fmtPrice(priceBuf, sizeof(priceBuf), m.price);
     lcd.setFont(&fonts::Font4);
-    lcd.setTextColor(C_WEATHER, C_PANEL);
+    lcd.setTextColor(C_PRICE, C_PANEL);
     lcd.setTextDatum(lgfx::top_center);
-    lcd.drawString(tempBuf, cx, PNL_Y + 14);
+    lcd.drawString(priceBuf, cx, y + 14);
 
-    // Condition string
+    // Change % — green or red
+    char changeBuf[10];
+    snprintf(changeBuf, sizeof(changeBuf), "%+.2f%%", m.changePct);
     lcd.setFont(&fonts::Font2);
-    lcd.setTextColor(C_DATE, C_PANEL);
-    lcd.drawString(wmoDesc(wxCode), cx, PNL_Y + 35);
+    lcd.setTextColor(m.changePct >= 0 ? C_UP : C_DOWN, C_PANEL);
+    lcd.setTextDatum(lgfx::top_center);
+    lcd.drawString(changeBuf, cx, y + 33);
 
-    // Humidity + wind
-    char sub[28];
-    if (humidity >= 0)
-        snprintf(sub, sizeof(sub), "Hum %d%%  W %.0fkm/h", humidity, windKmh);
-    else
-        snprintf(sub, sizeof(sub), "Wind %.0f km/h", windKmh);
+    // Open reference
+    char openBuf[12];
+    fmtOpen(openBuf, sizeof(openBuf), m.openPrice);
     lcd.setTextColor(C_LABEL, C_PANEL);
-    lcd.drawString(sub, cx, PNL_Y + 48);
+    lcd.drawString(openBuf, cx, y + 47);
 }
 
-static void drawCryptoPanel() {
-    int cx = PB_X + PB_W / 2;
-    lcd.fillRect(PB_X, PNL_Y, PB_W, PNL_H, C_PANEL);
-
-    lcd.setFont(&fonts::Font2);
-    lcd.setTextSize(1);
-    lcd.setTextColor(C_LABEL, C_PANEL);
-    lcd.setTextDatum(lgfx::top_center);
-    lcd.drawString("BTC / USD", cx, PNL_Y + 3);
-
-    if (!btcFetched) {
-        lcd.setTextColor(C_MUTED, C_PANEL);
-        lcd.setTextDatum(lgfx::middle_center);
-        lcd.drawString("Fetching...", cx, PNL_Y + PNL_H / 2);
-        return;
-    }
-    if (btcUsd < 0) {
-        lcd.setTextColor(C_WIFI_ERR, C_PANEL);
-        lcd.setTextDatum(lgfx::middle_center);
-        lcd.drawString("Offline", cx, PNL_Y + PNL_H / 2);
-        return;
-    }
-
-    char priceBuf[16];
-    fmtPrice(priceBuf, sizeof(priceBuf), btcUsd);
-    lcd.setFont(&fonts::Font4);
-    lcd.setTextColor(C_CRYPTO, C_PANEL);
-    lcd.setTextDatum(lgfx::top_center);
-    lcd.drawString(priceBuf, cx, PNL_Y + 14);
-
-    lcd.setFont(&fonts::Font2);
-    lcd.setTextColor(C_DATE, C_PANEL);
-    lcd.drawString("Bitcoin", cx, PNL_Y + 35);
-
-    lcd.setTextColor(C_LABEL, C_PANEL);
-    lcd.drawString("5-min refresh", cx, PNL_Y + 48);
-}
-
-static void drawStatusPanel() {
-    int cx = PC_X + PC_W / 2;
-    lcd.fillRect(PC_X, PNL_Y, PC_W, PNL_H, C_PANEL);
-
-    lcd.setFont(&fonts::Font2);
-    lcd.setTextSize(1);
-    lcd.setTextColor(C_LABEL, C_PANEL);
-    lcd.setTextDatum(lgfx::top_center);
-    lcd.drawString("STATUS", cx, PNL_Y + 3);
-
-    if (hasStatus) {
-        lcd.setTextColor(C_STATUS, C_PANEL);
-        // Up to three 16-char lines of status text
-        lcd.setTextDatum(lgfx::top_center);
-        lcd.drawString(statusMsg.substring(0, 16).c_str(),  cx, PNL_Y + 18);
-        if (statusMsg.length() > 16)
-            lcd.drawString(statusMsg.substring(16, 32).c_str(), cx, PNL_Y + 31);
-        if (statusMsg.length() > 32)
-            lcd.drawString(statusMsg.substring(32, 48).c_str(), cx, PNL_Y + 44);
-    } else {
-        lcd.setTextColor(C_MUTED, C_PANEL);
-        lcd.setTextDatum(lgfx::top_center);
-        lcd.drawString("No status set", cx, PNL_Y + 22);
-        lcd.drawString("POST /status", cx, PNL_Y + 34);
-        if (WiFi.status() == WL_CONNECTED) {
-            lcd.setTextColor(C_LABEL, C_PANEL);
-            lcd.drawString(WiFi.localIP().toString().c_str(), cx, PNL_Y + 50);
-        }
-    }
+static void drawAllMarkets() {
+    for (int i = 0; i < 6; i++) drawMarketPanel(i);
 }
 
 static void drawProgress() {
@@ -325,13 +292,13 @@ static void drawProgress() {
     int secs = t->tm_hour * 3600 + t->tm_min * 60 + t->tm_sec;
     int pct  = (int)((long)secs * 100 / 86400);
 
-    const int PAD  = 4;
-    const int LW   = 26;
-    const int PW   = 34;
-    const int bx   = PAD + LW + 3;
-    const int bw   = W - bx - PW - PAD;
-    const int by   = PRG_Y + (PRG_H - 9) / 2;
-    const int bh   = 9;
+    const int PAD = 4;
+    const int LW  = 26;
+    const int PW  = 34;
+    const int bx  = PAD + LW + 3;
+    const int bw  = W - bx - PW - PAD;
+    const int by  = PRG_Y + (PRG_H - 8) / 2;
+    const int bh  = 8;
 
     lcd.setFont(&fonts::Font2);
     lcd.setTextSize(1);
@@ -355,65 +322,98 @@ static void drawProgress() {
 static void drawAll() {
     lcd.fillScreen(C_BG);
     drawHeader();
-    drawClock();
-    drawWeatherPanel();
-    drawCryptoPanel();
-    drawStatusPanel();
+    drawAllMarkets();
     drawProgress();
     drawDividers();
 }
 
-// ── Data fetching ─────────────────────────────────────────────────────────────
+// ── Fetching ──────────────────────────────────────────────────────────────────
 static void fetchWeather() {
     char url[256];
     snprintf(url, sizeof(url),
         "http://api.open-meteo.com/v1/forecast"
         "?latitude=%.4f&longitude=%.4f"
-        "&current=temperature_2m,weather_code,relative_humidity_2m,wind_speed_10m",
+        "&current=temperature_2m,weather_code",
         (float)LATITUDE, (float)LONGITUDE);
 
     HTTPClient http;
     http.setTimeout(6000);
     http.begin(url);
-    bool ok = (http.GET() == HTTP_CODE_OK);
-    if (ok) {
+    if (http.GET() == HTTP_CODE_OK) {
         JsonDocument doc;
         if (!deserializeJson(doc, http.getString())) {
-            tempC    = doc["current"]["temperature_2m"].as<float>();
-            wxCode   = doc["current"]["weather_code"].as<int>();
-            humidity = doc["current"]["relative_humidity_2m"].as<int>();
-            windKmh  = doc["current"]["wind_speed_10m"].as<float>();
-        } else {
-            ok = false;
+            tempC  = doc["current"]["temperature_2m"].as<float>();
+            wxCode = doc["current"]["weather_code"].as<int>();
         }
     }
     http.end();
     wxFetched = true;
-    if (!ok) wxCode = -1;
 }
 
-static void fetchCrypto() {
-    // Coinbase public API — no key required, not geo-blocked
+// Stooq CSV API — single HTTPS request for all 6 symbols.
+// Response: Symbol,Date,Time,Open,High,Low,Close,Volume  (fields 0,3,6)
+// Change % is intraday (close vs open). Stooq returns the most recent session.
+static void fetchMarkets() {
+    // ^ must be %-encoded in the query string
+    const char* url =
+        "https://stooq.com/q/l/"
+        "?s=%5Espx,%5Esx5e,eem.us,xauusd,xagusd,btcusd"
+        "&f=sd2t2ohlcv&h&e=csv";
+
     WiFiClientSecure client;
     client.setInsecure();
     HTTPClient http;
-    http.setTimeout(8000);
-    http.begin(client, "https://api.coinbase.com/v2/prices/BTC-USD/spot");
+    http.setTimeout(10000);
+    http.begin(client, url);
+    http.addHeader("User-Agent", "Mozilla/5.0");
+
     bool ok = (http.GET() == HTTP_CODE_OK);
-    if (ok) {
-        JsonDocument doc;
-        if (!deserializeJson(doc, http.getString())) {
-            // {"data":{"amount":"97234.56","base":"BTC","currency":"USD"}}
-            const char* amt = doc["data"]["amount"];
-            if (amt) btcUsd = (long)atof(amt);
-            else     ok = false;
-        } else {
-            ok = false;
-        }
-    }
+    String csv = ok ? http.getString() : "";
     http.end();
-    btcFetched = true;
-    if (!ok) btcUsd = -1;
+
+    for (int i = 0; i < 6; i++) markets[i].fetched = true;
+
+    if (!ok || csv.length() < 10) {
+        for (int i = 0; i < 6; i++) markets[i].ok = false;
+        return;
+    }
+
+    // Skip header row
+    int lineStart = csv.indexOf('\n');
+    if (lineStart < 0) return;
+    lineStart++;
+
+    while (lineStart < (int)csv.length()) {
+        int lineEnd = csv.indexOf('\n', lineStart);
+        if (lineEnd < 0) lineEnd = csv.length();
+        String line = csv.substring(lineStart, lineEnd);
+        line.trim();
+
+        if (line.length() > 10) {
+            String sym = csvStr(line, 0);
+            sym.replace("^", "");
+            sym.toUpperCase();
+
+            float openVal  = csvFloat(line, 3);
+            float closeVal = csvFloat(line, 6);
+
+            for (int i = 0; i < 6; i++) {
+                String mSym = String(markets[i].stooqSym);
+                mSym.replace("^", "");
+                mSym.toUpperCase();
+
+                if (sym == mSym && closeVal > 0) {
+                    markets[i].price     = closeVal;
+                    markets[i].openPrice = openVal;
+                    markets[i].changePct = (openVal > 0)
+                        ? (closeVal - openVal) / openVal * 100.0f : 0;
+                    markets[i].ok = true;
+                    break;
+                }
+            }
+        }
+        lineStart = lineEnd + 1;
+    }
 }
 
 // ── WiFi ──────────────────────────────────────────────────────────────────────
@@ -426,72 +426,30 @@ static void connectWiFi() {
         ntp.begin();
         ntp.forceUpdate();
         fetchWeather();
-        fetchCrypto();
+        fetchMarkets();
     }
 }
 
-// ── HTTP handlers ─────────────────────────────────────────────────────────────
+// ── HTTP handlers (info page + manual refresh trigger) ───────────────────────
 static void onRoot() {
-    server.send(200, "text/html", R"HTML(<!DOCTYPE html>
+    char body[512];
+    snprintf(body, sizeof(body), R"HTML(<!DOCTYPE html>
 <html><head><title>Plusar</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<style>
-  *{box-sizing:border-box}
-  body{background:#06080F;color:#EEF2FF;font-family:monospace;max-width:480px;margin:40px auto;padding:20px}
-  h2{color:#33CCFF;margin:0 0 4px}
-  p{color:#7A93AC;font-size:12px;margin:0 0 20px}
-  input{padding:10px;width:100%;border:1px solid #1E3A52;background:#0B1420;color:#EEF2FF;border-radius:4px;font-size:14px;margin-bottom:8px}
-  .row{display:flex;gap:8px}
-  button{flex:1;padding:10px;border-radius:4px;cursor:pointer;font-size:14px;border:1px solid #33CCFF;background:#0D1B2A;color:#33CCFF}
-  button.warn{border-color:#FF4444;color:#FF4444}
-  button:hover{filter:brightness(1.2)}
-</style></head>
-<body>
-<h2>Plusar</h2>
-<p>Desk Dashboard — status panel controller</p>
-<input id="m" type="text" placeholder="Status message (max 48 chars)..." maxlength="48">
-<div class="row">
-  <button onclick="set()">Set Status</button>
-  <button class="warn" onclick="clr()">Clear</button>
-</div>
-<script>
-function set(){fetch('/status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:document.getElementById('m').value})});}
-function clr(){fetch('/status/clear',{method:'POST'});}
-</script>
-</body></html>)HTML");
+<style>body{background:#06080F;color:#EEF2FF;font-family:monospace;max-width:420px;margin:40px auto;padding:20px}
+h2{color:#33CCFF}p{color:#7A93AC;font-size:13px}
+button{padding:10px 20px;background:#0D1B2A;border:1px solid #33CCFF;color:#33CCFF;border-radius:4px;cursor:pointer;font-size:14px}
+button:hover{filter:brightness(1.3)}</style></head>
+<body><h2>Plusar Market Dashboard</h2>
+<p>IP: %s</p>
+<button onclick="fetch('/refresh',{method:'POST'})">Refresh Markets Now</button>
+</body></html>)HTML", WiFi.localIP().toString().c_str());
+    server.send(200, "text/html", body);
 }
 
-static void onStatusPost() {
-    String body = server.arg("plain");
-    String msg;
-    if (body.length() > 0) {
-        JsonDocument doc;
-        if (!deserializeJson(doc, body))
-            msg = doc["message"].as<String>();
-    }
-    if (msg.isEmpty()) msg = server.arg("msg");
-    if (msg.isEmpty()) {
-        server.send(400, "application/json", R"({"error":"no message"})");
-        return;
-    }
-    statusMsg = msg;
-    hasStatus = true;
-    drawStatusPanel();
-    drawDividers();
-    server.send(200, "application/json", R"({"ok":true})");
-}
-
-static void onStatusGet() {
-    String json = R"({"message":")" + (hasStatus ? statusMsg : String("")) +
-                  R"(","set":)" + (hasStatus ? "true" : "false") + "}";
-    server.send(200, "application/json", json);
-}
-
-static void onStatusClear() {
-    hasStatus = false;
-    statusMsg = "";
-    drawStatusPanel();
-    drawDividers();
+static bool refreshRequested = false;
+static void onRefresh() {
+    refreshRequested = true;
     server.send(200, "application/json", R"({"ok":true})");
 }
 
@@ -510,10 +468,8 @@ static void checkButtons() {
         lcd.setBrightness(fullBright ? 255 : 60);
     }
     if (prevUser == HIGH && user == LOW) {
-        hasStatus = false;
-        statusMsg = "";
-        drawStatusPanel();
-        drawDividers();
+        // Force an immediate market refresh
+        refreshRequested = true;
     }
     prevBoot = boot;
     prevUser = user;
@@ -532,9 +488,6 @@ void setup() {
     lcd.setRotation(0);
     lcd.setBrightness(255);
 
-    clockSprite.setColorDepth(16);
-    clockSprite.createSprite(W, CLK_H);
-
     lcd.fillScreen(C_BG);
     lcd.setFont(&fonts::Font4);
     lcd.setTextDatum(lgfx::middle_center);
@@ -543,10 +496,8 @@ void setup() {
 
     connectWiFi();
 
-    server.on("/",             HTTP_GET,  onRoot);
-    server.on("/status",       HTTP_GET,  onStatusGet);
-    server.on("/status",       HTTP_POST, onStatusPost);
-    server.on("/status/clear", HTTP_POST, onStatusClear);
+    server.on("/",        HTTP_GET,  onRoot);
+    server.on("/refresh", HTTP_POST, onRefresh);
     server.begin();
 
     drawAll();
@@ -558,64 +509,66 @@ void loop() {
 
     static uint32_t lastSec     = 0;
     static uint32_t lastWeather = 0;
-    static uint32_t lastCrypto  = 0;
+    static uint32_t lastMarkets = 0;
     static int      lastPct     = -1;
     static bool     wifiWas     = (WiFi.status() == WL_CONNECTED);
 
     uint32_t now    = millis();
     bool     wifiOk = (WiFi.status() == WL_CONNECTED);
 
-    // WiFi reconnect
     if (!wifiOk) {
         static uint32_t lastRetry = 0;
         if (now - lastRetry > 30000) {
             lastRetry = now;
             connectWiFi();
-            wifiOk = (WiFi.status() == WL_CONNECTED);
-            if (wifiOk) { drawAll(); wifiWas = true; }
-            else          drawHeader();
+            if (WiFi.status() == WL_CONNECTED) { drawAll(); wifiWas = true; }
+            else drawHeader();
         }
         return;
     }
     if (!wifiWas) { wifiWas = true; drawAll(); }
 
-    // 1-second tick: clock + conditional header/progress refresh
+    // Manual refresh via button or /refresh endpoint
+    if (refreshRequested) {
+        refreshRequested = false;
+        lastMarkets = now;
+        fetchMarkets();
+        drawAllMarkets();
+        drawDividers();
+    }
+
+    // 1-second tick
     if (now - lastSec >= 1000) {
         lastSec = now;
         ntp.update();
-        drawClock();
 
-        // Header (date string) refreshes once per minute
+        // Header: full redraw once per minute (date string changes)
         if (ntp.getSeconds() == 0) {
             drawHeader();
             drawDividers();
         }
 
-        // Progress bar redraws only when percentage changes (~once per 14 min)
+        // Progress bar — only when % changes (~once per 14 min)
         time_t     epoch = ntp.getEpochTime();
         struct tm *t     = localtime(&epoch);
         int secs = t->tm_hour * 3600 + t->tm_min * 60 + t->tm_sec;
         int pct  = (int)((long)secs * 100 / 86400);
-        if (pct != lastPct) {
-            lastPct = pct;
-            drawProgress();
-        }
+        if (pct != lastPct) { lastPct = pct; drawProgress(); }
     }
 
     // Weather — every 10 minutes
     if (lastWeather == 0 || now - lastWeather >= 600000UL) {
         lastWeather = now;
         fetchWeather();
-        drawWeatherPanel();
         drawHeader();
         drawDividers();
     }
 
-    // Crypto — every 5 minutes
-    if (lastCrypto == 0 || now - lastCrypto >= 300000UL) {
-        lastCrypto = now;
-        fetchCrypto();
-        drawCryptoPanel();
+    // Markets — every 5 minutes
+    if (lastMarkets == 0 || now - lastMarkets >= 300000UL) {
+        lastMarkets = now;
+        fetchMarkets();
+        drawAllMarkets();
         drawDividers();
     }
 }
