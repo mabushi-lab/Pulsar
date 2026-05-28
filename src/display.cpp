@@ -214,7 +214,9 @@ void drawHeader() {
     // Weather — right-aligned before the dot
     if (wxCode >= 0) {
         char wx[22];
-        snprintf(wx, sizeof(wx), "%.1f%cC  %s", tempC, '\xB0', wmoDesc(wxCode));
+        // '\xB0' (degree) is outside LovyanGFX bitmap font range → renders as square.
+        // Use plain 'C' — clean and readable at small header size.
+        snprintf(wx, sizeof(wx), "%.1fC  %s", tempC, wmoDesc(wxCode));
         lcd.setTextColor(C_WEATHER, C_HDR);
         lcd.setTextDatum(lgfx::middle_right);
         lcd.drawString(wx, W - 14, HDR_H / 2);
