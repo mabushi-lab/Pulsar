@@ -160,37 +160,91 @@ void drawAllMarkets() {
     for (int i = 0; i < MARKET_COUNT; i++) drawMarketPanel(i);
 }
 
+// 4-phase market session bar (Euronext / Xetra, CET/CEST).
+// Top half: full-width segmented bar with a cursor at the current minute.
+// Bottom half: phase label + countdown to the next transition.
 void drawProgress() {
     lcd.fillRect(0, PRG_Y, W, PRG_H, C_BG);
 
-    time_t     epoch = ntp.getEpochTime();
-    struct tm *t     = localtime(&epoch);
-    int        secs  = t->tm_hour * 3600 + t->tm_min * 60 + t->tm_sec;
-    int        pct   = (int)((long)secs * 100 / 86400);
+    time_t     epoch   = ntp.getEpochTime();
+    struct tm *t       = localtime(&epoch);
+    int        curMin  = t->tm_hour * 60 + t->tm_min;
+    bool       weekend = (t->tm_wday == 0 || t->tm_wday == 6);
 
-    const int PAD = 4, LW = 26, PW = 34;
-    const int bx  = PAD + LW + 3;
-    const int bw  = W - bx - PW - PAD;
-    const int by  = PRG_Y + (PRG_H - 8) / 2;
-    const int bh  = 8;
+    // Convert a minute-of-day to a bar x-coordinate (0..W)
+    // Uses integer arithmetic to avoid float on ESP32 hot path
+    auto xAt = [](int m) -> int { return (int)((long)m * W / MKT_DAY_MINS); };
+
+    // ── Segment bar (top, 9px) ────────────────────────────────────────────────
+    const int by = PRG_Y + 1;
+    const int bh = 9;
+
+    // Each segment: [start_min, end_min, dim_color, active_color]
+    struct Seg { int s, e; uint32_t dim, bright; } segs[5] = {
+        { 0,                MKT_PRE_START,  0x0E1520, 0x0E1520 },  // closed AM
+        { MKT_PRE_START,  MKT_OPEN_START,  0x2E1A00, 0xFFAA00 },  // pre-market
+        { MKT_OPEN_START,   MKT_OPEN_END,  0x002E10, 0x00CC44 },  // open
+        { MKT_OPEN_END,    MKT_POST_END,   0x101E33, 0x3399CC },  // after-hours
+        { MKT_POST_END,   MKT_DAY_MINS,   0x0E1520, 0x0E1520 },  // closed PM
+    };
+
+    for (int i = 0; i < 5; i++) {
+        int      x1     = xAt(segs[i].s);
+        int      x2     = (i == 4) ? W : xAt(segs[i].e);
+        bool     active = !weekend && curMin >= segs[i].s && curMin < segs[i].e;
+        uint32_t color  = active ? segs[i].bright : segs[i].dim;
+        lcd.fillRect(x1, by, x2 - x1, bh, color);
+    }
+
+    // Phase boundary tick marks
+    int bounds[4] = { MKT_PRE_START, MKT_OPEN_START, MKT_OPEN_END, MKT_POST_END };
+    for (int i = 0; i < 4; i++)
+        lcd.drawFastVLine(xAt(bounds[i]), by, bh, 0x2A4A6A);
+
+    // Current-time cursor (bright white)
+    if (!weekend) {
+        int cx = xAt(curMin);
+        if (cx > 0 && cx < W - 1)
+            lcd.drawFastVLine(cx, by - 1, bh + 2, 0xFFFFFF);
+    }
+
+    // ── Status label (bottom, Font2) ──────────────────────────────────────────
+    char     label[32];
+    uint32_t labelColor;
+
+    auto fmt = [](char* buf, const char* phase, int minsLeft) {
+        if (minsLeft >= 60)
+            snprintf(buf, 32, "%s  %dh %02dm left", phase,
+                     minsLeft / 60, minsLeft % 60);
+        else
+            snprintf(buf, 32, "%s  %dm left", phase, minsLeft);
+    };
+
+    if (weekend) {
+        snprintf(label, sizeof(label), "CLOSED  weekend");
+        labelColor = C_MUTED;
+    } else if (curMin < MKT_PRE_START) {
+        fmt(label, "CLOSED", MKT_PRE_START - curMin);
+        labelColor = C_MUTED;
+    } else if (curMin < MKT_OPEN_START) {
+        fmt(label, "PRE-MKT", MKT_OPEN_START - curMin);
+        labelColor = 0xFFAA00;
+    } else if (curMin < MKT_OPEN_END) {
+        fmt(label, "OPEN", MKT_OPEN_END - curMin);
+        labelColor = C_UP;
+    } else if (curMin < MKT_POST_END) {
+        fmt(label, "AFTER HRS", MKT_POST_END - curMin);
+        labelColor = 0x3399CC;
+    } else {
+        fmt(label, "CLOSED", MKT_DAY_MINS - curMin + MKT_PRE_START);
+        labelColor = C_MUTED;
+    }
 
     lcd.setFont(&fonts::Font2);
     lcd.setTextSize(1);
-    lcd.setTextColor(C_LABEL, C_BG);
-    lcd.setTextDatum(lgfx::middle_right);
-    lcd.drawString("DAY", PAD + LW, by + bh / 2);
-
-    lcd.fillRoundRect(bx, by, bw, bh, 3, C_PANEL);
-
-    int      fw = (bw * pct) / 100;
-    uint32_t fc = (pct < 50) ? C_WIFI_OK : (pct < 80) ? 0xFFAA00u : 0xFF4400u;
-    if (fw > 3) lcd.fillRoundRect(bx, by, fw, bh, 3, fc);
-
-    char buf[6];
-    snprintf(buf, sizeof(buf), "%d%%", pct);
-    lcd.setTextColor(C_DATE, C_BG);
-    lcd.setTextDatum(lgfx::middle_left);
-    lcd.drawString(buf, bx + bw + PAD, by + bh / 2);
+    lcd.setTextColor(labelColor, C_BG);
+    lcd.setTextDatum(lgfx::top_center);
+    lcd.drawString(label, W / 2, PRG_Y + 12);
 }
 
 void drawAll() {

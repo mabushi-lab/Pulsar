@@ -20,6 +20,19 @@ const int DIV3_Y = 148;
 const int PRG_Y  = 149;
 const int PRG_H  = 21;
 
+// ── Weather location ──────────────────────────────────────────────────────────
+const float WEATHER_LAT = 50.8798f;  // Leuven, Belgium
+const float WEATHER_LON =  4.7005f;
+
+// ── Market session (Euronext / Xetra, CET or CEST) ───────────────────────────
+// Ensure UTC_OFFSET_SEC in secrets.h matches current offset:
+//   CET  winter → 3600   CEST summer → 7200
+const int MKT_PRE_START  =  7 * 60;        // 07:00 pre-trading starts
+const int MKT_OPEN_START =  9 * 60;        // 09:00 continuous trading
+const int MKT_OPEN_END   = 17 * 60 + 30;   // 17:30 market closes
+const int MKT_POST_END   = 22 * 60;        // 22:00 after-hours end
+const int MKT_DAY_MINS   = 24 * 60;        // 1440
+
 // Three columns; x=107 and x=212 are 1-px vertical dividers
 const int COL_X[3] = { 0, 108, 213 };
 const int COL_W[3] = { 107, 104, 107 };

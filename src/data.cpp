@@ -1,19 +1,25 @@
 #include "data.h"
-#include "secrets.h"
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 
 // ── State ─────────────────────────────────────────────────────────────────────
-// symbol field stores the URL-encoded Yahoo Finance symbol used in fetch URLs.
-// ^ → %5E   = → %3D
+// All instruments are European-exchange-listed and priced in EUR.
+// symbol = URL-encoded Yahoo Finance symbol  (^ → %5E, = → %3D)
+//
+//  SXR8.DE   iShares Core S&P 500 UCITS ETF   — Xetra,         EUR
+//  ^STOXX50E Euro Stoxx 50 index               — native index,  EUR
+//  EMIM.AS   iShares Core MSCI EM IMI UCITS    — Euronext AMS,  EUR
+//  VWCE.DE   Vanguard FTSE All-World UCITS ETF — Xetra,         EUR
+//  XAUEUR=X  Gold spot (XAU/EUR)               — Forex cross,   EUR
+//  XAGEUR=X  Silver spot (XAG/EUR)             — Forex cross,   EUR
 MarketItem markets[MARKET_COUNT] = {
-    { "S&P 500",  "%5EGSPC",     0x33CCFF, 0, 0, 0, false, false },
-    { "STOXX 50", "%5ESTOXX50E", 0x33CCFF, 0, 0, 0, false, false },
-    { "Emrg Mkt", "EEM",         0x33CCFF, 0, 0, 0, false, false },
-    { "All World", "ACWI",       0x44BBFF, 0, 0, 0, false, false },
-    { "Gold",     "GC%3DF",      0xFFAA33, 0, 0, 0, false, false },
-    { "Silver",   "SI%3DF",      0xCCDDEE, 0, 0, 0, false, false },
+    { "S&P 500",   "SXR8.DE",      0x33CCFF, 0, 0, 0, false, false },
+    { "STOXX 50",  "%5ESTOXX50E",  0x33CCFF, 0, 0, 0, false, false },
+    { "Emrg Mkt",  "EMIM.AS",      0x33CCFF, 0, 0, 0, false, false },
+    { "All World", "VWCE.DE",      0x44BBFF, 0, 0, 0, false, false },
+    { "Gold",      "XAUEUR%3DX",   0xFFAA33, 0, 0, 0, false, false },
+    { "Silver",    "XAGEUR%3DX",   0xCCDDEE, 0, 0, 0, false, false },
 };
 
 float tempC    = 0.0f;
@@ -67,7 +73,7 @@ void fetchWeather() {
         "http://api.open-meteo.com/v1/forecast"
         "?latitude=%.4f&longitude=%.4f"
         "&current=temperature_2m,weather_code",
-        (float)LATITUDE, (float)LONGITUDE);
+        WEATHER_LAT, WEATHER_LON);
 
     HTTPClient http;
     http.setTimeout(6000);
