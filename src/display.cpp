@@ -74,6 +74,13 @@ void displaySetBrightness(bool full) {
     lcd.setBrightness(full ? 255 : 60);
 }
 
+void displayCycleBrightness() {
+    static const uint8_t levels[] = { 255, 70, 0 };
+    static int lvl = 0;
+    lvl = (lvl + 1) % 3;
+    lcd.setBrightness(levels[lvl]);
+}
+
 // ── Boot animations ───────────────────────────────────────────────────────────
 
 // Typewriter title + subtitle. Called before connectWiFi().
@@ -379,6 +386,73 @@ void drawDividers() {
     lcd.drawFastVLine(212, ROW1_Y, ROW_H, C_DIV);
     lcd.drawFastVLine(107, ROW2_Y, ROW_H, C_DIV);
     lcd.drawFastVLine(212, ROW2_Y, ROW_H, C_DIV);
+}
+
+// ── Pomodoro screen ───────────────────────────────────────────────────────────
+// state: 0=idle, 1=running, 2=paused
+void drawPomodoro(int secsLeft, int totalSecs, bool isWork, int state, int sessions) {
+    lcd.fillScreen(C_BG);
+
+    // Phase progress bar across the very top (8px)
+    uint32_t barColor = isWork ? 0x00CC44u : 0x3399CCu;
+    lcd.fillRect(0, 0, W, 8, C_PANEL);
+    if (state > 0 && totalSecs > 0) {
+        int filled = (int)((long)(totalSecs - secsLeft) * W / totalSecs);
+        if (filled > 0) lcd.fillRect(0, 0, filled, 8, barColor);
+    }
+
+    // Big countdown (Font7, centred at y=70)
+    char tbuf[6];
+    snprintf(tbuf, sizeof(tbuf), "%02d:%02d", secsLeft / 60, secsLeft % 60);
+    lcd.setFont(&fonts::Font7);
+    lcd.setTextSize(1);
+    lcd.setTextDatum(lgfx::middle_center);
+    lcd.setTextColor(state == 2 ? (uint32_t)0x445566 : (uint32_t)0xEEF2FF, C_BG);
+    lcd.drawString(tbuf, W / 2, 70);
+
+    // Phase / state label (Font4, centred at y=115)
+    lcd.setFont(&fonts::Font4);
+    lcd.setTextDatum(lgfx::middle_center);
+    if (state == 0) {
+        lcd.setTextColor(C_MUTED, C_BG);
+        lcd.drawString("READY", W / 2, 115);
+    } else if (state == 2) {
+        lcd.setTextColor(C_MUTED, C_BG);
+        lcd.drawString("PAUSED", W / 2, 115);
+    } else if (isWork) {
+        lcd.setTextColor(C_UP, C_BG);
+        lcd.drawString("WORK", W / 2, 115);
+    } else {
+        lcd.setTextColor(0x3399CCu, C_BG);
+        lcd.drawString("BREAK", W / 2, 115);
+    }
+
+    // Session counter (Font2, y=145)
+    char sbuf[20];
+    snprintf(sbuf, sizeof(sbuf), "session %d", sessions + 1);
+    lcd.setFont(&fonts::Font2);
+    lcd.setTextColor(C_LABEL, C_BG);
+    lcd.setTextDatum(lgfx::middle_center);
+    lcd.drawString(sbuf, W / 2, 145);
+
+    // Hint (Font2, y=160)
+    const char* hint =
+        (state == 0) ? "tap: start    hold: exit" :
+        (state == 2) ? "tap: resume   hold: exit" :
+                       "tap: pause    hold: exit";
+    lcd.setTextColor(C_MUTED, C_BG);
+    lcd.drawString(hint, W / 2, 160);
+}
+
+// Brief colour flash when a phase ends — signals the user without a buzzer
+void animPomAlert(bool wasWork) {
+    uint32_t color = wasWork ? 0x003322u : 0x002233u;
+    for (int i = 0; i < 3; i++) {
+        lcd.fillScreen(color);
+        delay(120);
+        lcd.fillScreen(C_BG);
+        delay(80);
+    }
 }
 
 void drawAll() {
