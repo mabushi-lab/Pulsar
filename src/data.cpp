@@ -18,10 +18,10 @@ MarketItem markets[MARKET_COUNT] = {
     { "STOXX 50",  "%5ESTOXX50E",  0x33CCFF, 0, 0, 0, false, false },
     { "Emrg Mkt",  "EMIM.AS",      0x33CCFF, 0, 0, 0, false, false },
     { "All World", "VWCE.DE",      0x44BBFF, 0, 0, 0, false, false },
-    // EXS1.DE = iShares Physical Gold ETC   (Xetra, EUR) — confirmed working
-    // ISAG.DE = iShares Physical Silver ETC (Xetra, EUR) — same iShares family (Ag = silver)
+    // EXS1.DE = iShares Physical Gold ETC        (Xetra, EUR)        — confirmed working
+    // PHAG.AS = WisdomTree Physical Silver ETC  (Euronext AMS, EUR) — .AS has been reliable
     { "Gold",      "EXS1.DE",      0xFFAA33, 0, 0, 0, false, false },
-    { "Silver",    "ISAG.DE",      0xCCDDEE, 0, 0, 0, false, false },
+    { "Silver",    "PHAG.AS",      0xCCDDEE, 0, 0, 0, false, false },
 };
 
 float tempC    = 0.0f;
