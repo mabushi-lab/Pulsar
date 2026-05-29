@@ -66,7 +66,7 @@ static uint32_t lerpColor(uint32_t a, uint32_t b, uint8_t t) {
 // ── Public display control ────────────────────────────────────────────────────
 void displayInit() {
     lcd.init();
-    lcd.setRotation(0);
+    lcd.setRotation(2);
     lcd.setBrightness(255);
 }
 
