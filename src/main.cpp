@@ -184,20 +184,18 @@ void loop() {
         drawDividers();
     }
 
-    // 1-second tick: header (drives colon blink + WiFi breathe)
+    // 1-second tick: header + footer
     if (now - lastSec >= 1000) {
         lastSec = now;
         ntp.update();
         drawHeader();
-    }
 
-    // Progress bar: update each minute
-    {
-        time_t     epoch = ntp.getEpochTime();
-        struct tm *t     = localtime(&epoch);
-        static int lastMin = -1;
-        int curMin = t->tm_hour * 60 + t->tm_min;
-        if (curMin != lastMin) { lastMin = curMin; drawProgress(); }
+        // Countdown to next market fetch
+        int secsLeft = (lastMarkets == 0)
+            ? 0
+            : (int)((15000UL - min(now - lastMarkets, 15000UL)) / 1000UL);
+        displaySetRefreshCountdown(secsLeft);
+        drawProgress();
     }
 
     // Weather — every 10 minutes

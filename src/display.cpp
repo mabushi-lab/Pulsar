@@ -59,6 +59,10 @@ static uint32_t       s_flashEnd[MARKET_COUNT]   = {};
 static bool s_silverView = false;
 static const int SILVER_IDX = 5;
 
+// ── Refresh countdown ─────────────────────────────────────────────────────────
+static int s_refreshCountdown = -1;
+void displaySetRefreshCountdown(int secs) { s_refreshCountdown = secs; }
+
 void displaySetSilverView(bool silver) { s_silverView = silver; }
 bool displayIsSilverView()             { return s_silverView; }
 
@@ -395,6 +399,15 @@ void drawProgress() {
     lcd.setTextColor(labelColor, C_BG);
     lcd.setTextDatum(lgfx::top_center);
     lcd.drawString(label, W / 2, PRG_Y + 9);
+
+    // Refresh countdown — right-aligned, muted
+    if (s_refreshCountdown >= 0) {
+        char cbuf[8];
+        snprintf(cbuf, sizeof(cbuf), "~%ds", s_refreshCountdown);
+        lcd.setTextColor(C_MUTED, C_BG);
+        lcd.setTextDatum(lgfx::top_right);
+        lcd.drawString(cbuf, W - 4, PRG_Y + 9);
+    }
 }
 
 // ── Structural ────────────────────────────────────────────────────────────────

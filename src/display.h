@@ -33,3 +33,8 @@ void drawAllMarkets();
 void drawProgress();
 void drawDividers();
 void drawAll();
+
+// ── Refresh countdown ─────────────────────────────────────────────────────────
+// Call every second with seconds until the next market fetch.
+// Shown as a small right-aligned indicator in the footer label row.
+void displaySetRefreshCountdown(int secs);
