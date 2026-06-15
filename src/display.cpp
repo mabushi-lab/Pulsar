@@ -55,6 +55,13 @@ static const uint32_t FLASH_MS  = 380;
 static uint32_t       s_flashStart[MARKET_COUNT] = {};
 static uint32_t       s_flashEnd[MARKET_COUNT]   = {};
 
+// ── View mode ─────────────────────────────────────────────────────────────────
+static bool s_silverView = false;
+static const int SILVER_IDX = 5;
+
+void displaySetSilverView(bool silver) { s_silverView = silver; }
+bool displayIsSilverView()             { return s_silverView; }
+
 // Integer colour lerp: t=0 → a, t=255 → b
 static uint32_t lerpColor(uint32_t a, uint32_t b, uint8_t t) {
     uint8_t r = (uint8_t)(((uint16_t)((a>>16)&0xFF)*(255u-t) + (uint16_t)((b>>16)&0xFF)*t) >> 8);
@@ -136,11 +143,16 @@ void animRevealMain() {
     drawHeader();
     delay(45);
 
-    // Panels slide in one by one, left-to-right, row by row
-    for (int i = 0; i < MARKET_COUNT; i++) {
-        drawMarketPanel(i);
+    // Panels slide in one by one (or single Silver panel)
+    if (s_silverView) {
+        drawSilverOnly();
         drawDividers();
-        delay(60);
+    } else {
+        for (int i = 0; i < MARKET_COUNT; i++) {
+            drawMarketPanel(i);
+            drawDividers();
+            delay(60);
+        }
     }
 
     drawProgress();
@@ -160,15 +172,23 @@ void animTick() {
     if (now - lastTick < 32) return;  // ~30 fps cap
     lastTick = now;
 
-    bool needDividers = false;
-    for (int i = 0; i < MARKET_COUNT; i++) {
-        if (s_flashEnd[i] > 0 && now >= s_flashEnd[i]) {
-            s_flashEnd[i] = 0;
-            drawMarketPanel(i);
-            needDividers = true;
+    if (s_silverView) {
+        if (s_flashEnd[SILVER_IDX] > 0 && now >= s_flashEnd[SILVER_IDX]) {
+            s_flashEnd[SILVER_IDX] = 0;
+            drawSilverOnly();
+            drawDividers();
         }
+    } else {
+        bool needDividers = false;
+        for (int i = 0; i < MARKET_COUNT; i++) {
+            if (s_flashEnd[i] > 0 && now >= s_flashEnd[i]) {
+                s_flashEnd[i] = 0;
+                drawMarketPanel(i);
+                needDividers = true;
+            }
+        }
+        if (needDividers) drawDividers();
     }
-    if (needDividers) drawDividers();
 }
 
 // ── Section draws ─────────────────────────────────────────────────────────────
@@ -380,12 +400,14 @@ void drawProgress() {
 // ── Structural ────────────────────────────────────────────────────────────────
 void drawDividers() {
     lcd.drawFastHLine(0, DIV1_Y, W, C_DIV);
-    lcd.drawFastHLine(0, DIV2_Y, W, C_DIV);
     lcd.drawFastHLine(0, DIV3_Y, W, C_DIV);
-    lcd.drawFastVLine(107, ROW1_Y, ROW_H, C_DIV);
-    lcd.drawFastVLine(212, ROW1_Y, ROW_H, C_DIV);
-    lcd.drawFastVLine(107, ROW2_Y, ROW_H, C_DIV);
-    lcd.drawFastVLine(212, ROW2_Y, ROW_H, C_DIV);
+    if (!s_silverView) {
+        lcd.drawFastHLine(0, DIV2_Y, W, C_DIV);
+        lcd.drawFastVLine(107, ROW1_Y, ROW_H, C_DIV);
+        lcd.drawFastVLine(212, ROW1_Y, ROW_H, C_DIV);
+        lcd.drawFastVLine(107, ROW2_Y, ROW_H, C_DIV);
+        lcd.drawFastVLine(212, ROW2_Y, ROW_H, C_DIV);
+    }
 }
 
 // ── Pomodoro screen ───────────────────────────────────────────────────────────
@@ -455,10 +477,67 @@ void animPomAlert(bool wasWork) {
     }
 }
 
+void drawSilverOnly() {
+    const MarketItem& m  = markets[SILVER_IDX];
+    const int         y  = ROW1_Y;
+    const int         h  = DIV3_Y - ROW1_Y;   // 127px
+    const int         cx = W / 2;
+
+    uint32_t now      = millis();
+    bool     flashing = (s_flashEnd[SILVER_IDX] > 0 && now < s_flashEnd[SILVER_IDX]);
+    uint32_t bg       = C_PANEL;
+
+    if (flashing) {
+        uint32_t elapsed = now - s_flashStart[SILVER_IDX];
+        uint8_t  t       = (uint8_t)(255u - (elapsed * 255u) / FLASH_MS);
+        bg = lerpColor(C_PANEL, 0x112238, t);
+        lcd.fillRect(0, y, W, h, bg);
+        lcd.drawRect(0, y, W, h, lerpColor(C_PANEL, 0x2A5A8A, t));
+    } else {
+        lcd.fillRect(0, y, W, h, bg);
+    }
+
+    // Label — Font2 keeps it small so the price dominates
+    lcd.setFont(&fonts::Font2);
+    lcd.setTextSize(1);
+    lcd.setTextColor(m.accentColor, bg);
+    lcd.setTextDatum(lgfx::top_center);
+    lcd.drawString(m.label, cx, y + 4);
+
+    if (!m.fetched) {
+        lcd.setTextColor(C_MUTED, bg);
+        lcd.setTextDatum(lgfx::middle_center);
+        lcd.drawString("Loading...", cx, y + h / 2);
+        return;
+    }
+    if (!m.ok) {
+        lcd.setTextColor(C_DOWN, bg);
+        lcd.setTextDatum(lgfx::middle_center);
+        lcd.drawString("Offline", cx, y + h / 2);
+        return;
+    }
+
+    // Price — Font7 (large 7-segment style), centred vertically in the area
+    char priceBuf[12];
+    fmtPrice(priceBuf, sizeof(priceBuf), m.price);
+    lcd.setFont(&fonts::Font7);
+    lcd.setTextColor(C_PRICE, bg);
+    lcd.setTextDatum(lgfx::middle_center);
+    lcd.drawString(priceBuf, cx, y + 66);
+
+    // Change % — Font4, pinned to the bottom
+    char changeBuf[10];
+    snprintf(changeBuf, sizeof(changeBuf), "%+.2f%%", m.changePct);
+    lcd.setFont(&fonts::Font4);
+    lcd.setTextColor(m.changePct >= 0 ? C_UP : C_DOWN, bg);
+    lcd.setTextDatum(lgfx::bottom_center);
+    lcd.drawString(changeBuf, cx, y + h - 4);
+}
+
 void drawAll() {
     lcd.fillScreen(C_BG);
     drawHeader();
-    drawAllMarkets();
+    if (s_silverView) drawSilverOnly(); else drawAllMarkets();
     drawProgress();
     drawDividers();
 }

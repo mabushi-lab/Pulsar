@@ -52,9 +52,19 @@ static void checkButtons() {
     if (prevBoot == HIGH && boot == LOW) bootDown = millis();
     if (prevUser == HIGH && user == LOW) userDown = millis();
 
-    // ── BOOT released → cycle brightness ─────────────────────────────────────
-    if (prevBoot == LOW && boot == HIGH)
-        displayCycleBrightness();
+    // ── BOOT released ─────────────────────────────────────────────────────────
+    if (prevBoot == LOW && boot == HIGH) {
+        if (millis() - bootDown >= 600) {
+            // Long press: toggle 6-market / Silver-only view
+            bool sv = !displayIsSilverView();
+            displaySetSilverView(sv);
+            if (sv) { drawSilverOnly(); } else { drawAllMarkets(); }
+            drawDividers();
+        } else {
+            // Short press: cycle brightness
+            displayCycleBrightness();
+        }
+    }
 
     // ── USER released ─────────────────────────────────────────────────────────
     if (prevUser == LOW && user == HIGH) {
@@ -163,8 +173,13 @@ void loop() {
         refreshRequested = false;
         lastMarkets = now;
         fetchMarkets();
-        for (int i = 0; i < MARKET_COUNT; i++) triggerPanelFlash(i);
-        drawAllMarkets();
+        if (displayIsSilverView()) {
+            triggerPanelFlash(5);
+            drawSilverOnly();
+        } else {
+            for (int i = 0; i < MARKET_COUNT; i++) triggerPanelFlash(i);
+            drawAllMarkets();
+        }
         drawDividers();
     }
 
@@ -195,8 +210,13 @@ void loop() {
     if (lastMarkets == 0 || now - lastMarkets >= 300000UL) {
         lastMarkets = now;
         fetchMarkets();
-        for (int i = 0; i < MARKET_COUNT; i++) triggerPanelFlash(i);
-        drawAllMarkets();
+        if (displayIsSilverView()) {
+            triggerPanelFlash(5);
+            drawSilverOnly();
+        } else {
+            for (int i = 0; i < MARKET_COUNT; i++) triggerPanelFlash(i);
+            drawAllMarkets();
+        }
         drawDividers();
     }
 }
