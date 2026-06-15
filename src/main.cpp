@@ -207,8 +207,8 @@ void loop() {
         drawHeader();
     }
 
-    // Markets — every 5 minutes
-    if (lastMarkets == 0 || now - lastMarkets >= 300000UL) {
+    // Markets — every 15 seconds (matches Yahoo Finance's data refresh rate)
+    if (lastMarkets == 0 || now - lastMarkets >= 15000UL) {
         lastMarkets = now;
         fetchMarkets();
         if (displayIsSilverView()) {

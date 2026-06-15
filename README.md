@@ -68,18 +68,26 @@ Edit `include/secrets.h`:
 #define WIFI_SSID       "YourNetwork"
 #define WIFI_PASSWORD   "YourPassword"
 
-// UTC offset in seconds — set to your local time
-// CEST (summer): 7200   CET (winter): 3600
+// UTC offset in seconds
+// UTC+1 CET  (winter): 3600
+// UTC+2 CEST (summer): 7200
 #define UTC_OFFSET_SEC  7200
-
-// Open-Meteo coordinates (no API key required)
-#define WEATHER_LAT  52.3676f
-#define WEATHER_LON   4.9041f
 ```
 
 > `secrets.h` is gitignored and will never be committed.
 
-### 3. Build and flash
+### 3. Set your weather location
+
+Edit `src/config.h` and update the coordinates to your city:
+
+```cpp
+const float WEATHER_LAT = 50.8798f;  // latitude
+const float WEATHER_LON =  4.7005f;  // longitude
+```
+
+Find your coordinates at [latlong.net](https://www.latlong.net).
+
+### 4. Build and flash
 
 ```bash
 pio run -t upload
