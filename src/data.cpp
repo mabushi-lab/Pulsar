@@ -4,24 +4,23 @@
 #include <ArduinoJson.h>
 
 // ── State ─────────────────────────────────────────────────────────────────────
-// All instruments are European-exchange-listed and priced in EUR.
-// symbol = URL-encoded Yahoo Finance symbol  (^ → %5E, = → %3D)
+// symbol = Yahoo Finance symbol, URL-encoded where needed (^ → %5E; = is valid in a path, keep literal)
 //
-//  SXR8.DE   iShares Core S&P 500 UCITS ETF   — Xetra,         EUR
-//  ^STOXX50E Euro Stoxx 50 index               — native index,  EUR
-//  EMIM.AS   iShares Core MSCI EM IMI UCITS    — Euronext AMS,  EUR
-//  VWCE.DE   Vanguard FTSE All-World UCITS ETF — Xetra,         EUR
-//  XAUEUR=X  Gold spot (XAU/EUR)               — Forex cross,   EUR
-//  XAGEUR=X  Silver spot (XAG/EUR)             — Forex cross,   EUR
+//  SXR8.DE    iShares Core S&P 500 UCITS ETF   — Xetra,         EUR
+//  ^STOXX50E  Euro Stoxx 50 index               — native index,  EUR
+//  EMIM.AS    iShares Core MSCI EM IMI UCITS    — Euronext AMS,  EUR
+//  VWCE.DE    Vanguard FTSE All-World UCITS ETF — Xetra,         EUR
+//  EXS1.DE    iShares Physical Gold ETC         — Xetra,         EUR
+//  XAGUSD=X   Silver spot (XAG/USD)             — Forex cross,   USD $/oz
 MarketItem markets[MARKET_COUNT] = {
     { "S&P 500",   "SXR8.DE",      0x33CCFF, 0, 0, 0, false, false },
     { "STOXX 50",  "%5ESTOXX50E",  0x33CCFF, 0, 0, 0, false, false },
     { "Emrg Mkt",  "EMIM.AS",      0x33CCFF, 0, 0, 0, false, false },
     { "All World", "VWCE.DE",      0x44BBFF, 0, 0, 0, false, false },
-    // EXS1.DE = iShares Physical Gold ETC        (Xetra, EUR)        — confirmed working
-    // PHAG.AS = WisdomTree Physical Silver ETC  (Euronext AMS, EUR) — .AS has been reliable
+    // EXS1.DE   = iShares Physical Gold ETC  (Xetra, EUR)       — confirmed working
+    // XAGUSD=X  = Silver spot (XAG/USD)     (Forex cross, USD) — live $/oz
     { "Gold",      "EXS1.DE",      0xFFAA33, 0, 0, 0, false, false },
-    { "Silver",    "PHAG.AS",      0xCCDDEE, 0, 0, 0, false, false },
+    { "Silver",    "XAGUSD=X",     0xCCDDEE, 0, 0, 0, false, false },
 };
 
 float tempC    = 0.0f;
