@@ -4,23 +4,23 @@
 #include <ArduinoJson.h>
 
 // ── State ─────────────────────────────────────────────────────────────────────
-// symbol = Yahoo Finance symbol, URL-encoded where needed (^ → %5E; = is valid in a path, keep literal)
+// symbol = Yahoo Finance symbol, URL-encoded where needed (^ → %5E)
+// Yahoo Finance returns 401 for forex crosses (=X symbols), so all symbols
+// must be exchange-traded instruments.
 //
 //  SXR8.DE    iShares Core S&P 500 UCITS ETF   — Xetra,         EUR
 //  ^STOXX50E  Euro Stoxx 50 index               — native index,  EUR
 //  EMIM.AS    iShares Core MSCI EM IMI UCITS    — Euronext AMS,  EUR
 //  VWCE.DE    Vanguard FTSE All-World UCITS ETF — Xetra,         EUR
-//  EXS1.DE    iShares Physical Gold ETC         — Xetra,         EUR
-//  XAGUSD=X   Silver spot (XAG/USD)             — Forex cross,   USD $/oz
+//  GLD        SPDR Gold Shares                  — NYSE Arca,     USD
+//  SLV        iShares Silver Trust              — NYSE Arca,     USD
 MarketItem markets[MARKET_COUNT] = {
     { "S&P 500",   "SXR8.DE",      0x33CCFF, 0, 0, 0, false, false },
     { "STOXX 50",  "%5ESTOXX50E",  0x33CCFF, 0, 0, 0, false, false },
     { "Emrg Mkt",  "EMIM.AS",      0x33CCFF, 0, 0, 0, false, false },
     { "All World", "VWCE.DE",      0x44BBFF, 0, 0, 0, false, false },
-    // EXS1.DE   = iShares Physical Gold ETC  (Xetra, EUR)       — confirmed working
-    // XAGUSD=X  = Silver spot (XAG/USD)     (Forex cross, USD) — live $/oz
-    { "Gold",      "EXS1.DE",      0xFFAA33, 0, 0, 0, false, false },
-    { "Silver",    "XAGUSD=X",     0xCCDDEE, 0, 0, 0, false, false },
+    { "Gold",      "GLD",          0xFFAA33, 0, 0, 0, false, false },
+    { "Silver",    "SLV",          0xCCDDEE, 0, 0, 0, false, false },
 };
 
 float tempC    = 0.0f;
@@ -91,8 +91,6 @@ void fetchWeather() {
 }
 
 // Yahoo Finance v8/chart — one HTTPS request per symbol.
-// Extracts regularMarketPrice and previousClose from the meta block.
-// changePct is day-over-day (price vs yesterday's close).
 void fetchMarkets() {
     WiFiClientSecure client;
     client.setInsecure();
@@ -100,7 +98,7 @@ void fetchMarkets() {
     for (int i = 0; i < MARKET_COUNT; i++) {
         char url[128];
         snprintf(url, sizeof(url),
-            "https://query1.finance.yahoo.com/v8/finance/chart/%s?interval=1d&range=1d",
+            "https://query2.finance.yahoo.com/v8/finance/chart/%s?interval=1d&range=1d",
             markets[i].symbol);
 
         HTTPClient http;
@@ -115,19 +113,16 @@ void fetchMarkets() {
         int httpCode = http.GET();
         Serial.printf("[fetch] %-12s  HTTP %d\n", markets[i].symbol, httpCode);
         if (httpCode == HTTP_CODE_OK) {
-            // Filter keeps only the meta fields we need.
-            // Yahoo Finance uses "chartPreviousClose" (not "previousClose") in v8/chart.
             JsonDocument filter;
-            filter["chart"]["result"][0]["meta"]["regularMarketPrice"]        = true;
-            filter["chart"]["result"][0]["meta"]["chartPreviousClose"]        = true;
-            filter["chart"]["result"][0]["meta"]["previousClose"]             = true;
-            filter["chart"]["result"][0]["meta"]["regularMarketPreviousClose"]= true;
+            filter["chart"]["result"][0]["meta"]["regularMarketPrice"]         = true;
+            filter["chart"]["result"][0]["meta"]["chartPreviousClose"]         = true;
+            filter["chart"]["result"][0]["meta"]["previousClose"]              = true;
+            filter["chart"]["result"][0]["meta"]["regularMarketPreviousClose"] = true;
 
             JsonDocument doc;
-            if (!deserializeJson(doc, http.getString(),
+            if (!deserializeJson(doc, *http.getStreamPtr(),
                                  DeserializationOption::Filter(filter))) {
                 float price = doc["chart"]["result"][0]["meta"]["regularMarketPrice"].as<float>();
-                // Try each field name Yahoo Finance uses across instrument types
                 float prev  = doc["chart"]["result"][0]["meta"]["chartPreviousClose"].as<float>();
                 if (prev <= 0) prev = doc["chart"]["result"][0]["meta"]["previousClose"].as<float>();
                 if (prev <= 0) prev = doc["chart"]["result"][0]["meta"]["regularMarketPreviousClose"].as<float>();

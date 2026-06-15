@@ -98,6 +98,7 @@ static void checkButtons() {
 // ── Entry points ──────────────────────────────────────────────────────────────
 void setup() {
     Serial.begin(115200);
+    delay(800);  // let USB CDC enumerate so early Serial output isn't lost
 
     pinMode(PIN_POWER, OUTPUT);
     digitalWrite(PIN_POWER, HIGH);
