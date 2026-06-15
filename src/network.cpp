@@ -15,14 +15,14 @@ bool      refreshRequested = false;
 static void onRoot() {
     char body[512];
     snprintf(body, sizeof(body), R"HTML(<!DOCTYPE html>
-<html><head><title>Plusar</title>
+<html><head><title>Pulsar</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>body{background:#06080F;color:#EEF2FF;font-family:monospace;max-width:420px;margin:40px auto;padding:20px}
 h2{color:#33CCFF}p{color:#7A93AC;font-size:13px}
 button{padding:10px 20px;background:#0D1B2A;border:1px solid #33CCFF;color:#33CCFF;
 border-radius:4px;cursor:pointer;font-size:14px}
 button:hover{filter:brightness(1.3)}</style></head>
-<body><h2>Plusar Market Dashboard</h2>
+<body><h2>Pulsar Market Dashboard</h2>
 <p>Device IP: %s</p>
 <button onclick="fetch('/refresh',{method:'POST'}).then(()=>alert('Refreshing...'))">
 Refresh Markets Now</button>
