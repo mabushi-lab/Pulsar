@@ -191,9 +191,8 @@ void loop() {
         drawHeader();
 
         // Countdown to next market fetch
-        int secsLeft = (lastMarkets == 0)
-            ? 0
-            : (int)((15000UL - min(now - lastMarkets, 15000UL)) / 1000UL);
+        uint32_t elapsed = (lastMarkets == 0) ? 15000U : (now - lastMarkets);
+        int secsLeft = (elapsed >= 15000U) ? 0 : (int)((15000U - elapsed) / 1000U);
         displaySetRefreshCountdown(secsLeft);
         drawProgress();
     }
