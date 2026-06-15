@@ -480,58 +480,61 @@ void animPomAlert(bool wasWork) {
 void drawSilverOnly() {
     const MarketItem& m  = markets[SILVER_IDX];
     const int         y  = ROW1_Y;
-    const int         h  = DIV3_Y - ROW1_Y;   // 127px
+    const int         h  = DIV3_Y - y;   // 127px
     const int         cx = W / 2;
+
+    // Open background — C_BG, not C_PANEL, so there's no "box" to see
+    lcd.fillRect(0, y, W, h, C_BG);
 
     uint32_t now      = millis();
     bool     flashing = (s_flashEnd[SILVER_IDX] > 0 && now < s_flashEnd[SILVER_IDX]);
-    uint32_t bg       = C_PANEL;
-
     if (flashing) {
         uint32_t elapsed = now - s_flashStart[SILVER_IDX];
         uint8_t  t       = (uint8_t)(255u - (elapsed * 255u) / FLASH_MS);
-        bg = lerpColor(C_PANEL, 0x112238, t);
-        lcd.fillRect(0, y, W, h, bg);
-        lcd.drawRect(0, y, W, h, lerpColor(C_PANEL, 0x2A5A8A, t));
-    } else {
-        lcd.fillRect(0, y, W, h, bg);
+        lcd.fillRect(0, y, W, h, lerpColor(C_BG, 0x0D1F33, t));
     }
 
-    // Label — Font2 keeps it small so the price dominates
-    lcd.setFont(&fonts::Font2);
+    // Accent bar at the very top edge
+    lcd.fillRect(0, y, W, 3, m.accentColor);
+
+    // Instrument name — Font4 gives it headline weight
+    lcd.setFont(&fonts::Font4);
     lcd.setTextSize(1);
-    lcd.setTextColor(m.accentColor, bg);
+    lcd.setTextColor(m.accentColor, C_BG);
     lcd.setTextDatum(lgfx::top_center);
-    lcd.drawString(m.label, cx, y + 4);
+    lcd.drawString(m.label, cx, y + 5);
 
     if (!m.fetched) {
-        lcd.setTextColor(C_MUTED, bg);
+        lcd.setTextColor(C_MUTED, C_BG);
         lcd.setTextDatum(lgfx::middle_center);
         lcd.drawString("Loading...", cx, y + h / 2);
         return;
     }
     if (!m.ok) {
-        lcd.setTextColor(C_DOWN, bg);
+        lcd.setTextColor(C_DOWN, C_BG);
         lcd.setTextDatum(lgfx::middle_center);
         lcd.drawString("Offline", cx, y + h / 2);
         return;
     }
 
-    // Price — Font7 (large 7-segment style), centred vertically in the area
+    // Thin rule below the label
+    lcd.drawFastHLine(cx - 80, y + 34, 160, C_DIV);
+
+    // Price — Font7, dominant
     char priceBuf[12];
     fmtPrice(priceBuf, sizeof(priceBuf), m.price);
     lcd.setFont(&fonts::Font7);
-    lcd.setTextColor(C_PRICE, bg);
+    lcd.setTextColor(C_PRICE, C_BG);
     lcd.setTextDatum(lgfx::middle_center);
     lcd.drawString(priceBuf, cx, y + 66);
 
-    // Change % — Font4, pinned to the bottom
+    // Change % — Font4, coloured, bottom of the area
     char changeBuf[10];
     snprintf(changeBuf, sizeof(changeBuf), "%+.2f%%", m.changePct);
     lcd.setFont(&fonts::Font4);
-    lcd.setTextColor(m.changePct >= 0 ? C_UP : C_DOWN, bg);
+    lcd.setTextColor(m.changePct >= 0 ? C_UP : C_DOWN, C_BG);
     lcd.setTextDatum(lgfx::bottom_center);
-    lcd.drawString(changeBuf, cx, y + h - 4);
+    lcd.drawString(changeBuf, cx, y + h - 6);
 }
 
 void drawAll() {

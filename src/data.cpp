@@ -4,23 +4,24 @@
 #include <ArduinoJson.h>
 
 // ── State ─────────────────────────────────────────────────────────────────────
-// symbol = Yahoo Finance symbol, URL-encoded where needed (^ → %5E)
-// Yahoo Finance returns 401 for forex crosses (=X symbols), so all symbols
-// must be exchange-traded instruments.
+// All instruments are on Xetra or Euronext AMS so they share the same
+// trading hours (09:00–17:30 CET) and update together.
+// Yahoo Finance returns 401 for forex crosses (=X), so all symbols must
+// be exchange-traded instruments.
 //
-//  SXR8.DE    iShares Core S&P 500 UCITS ETF   — Xetra,         EUR
-//  ^STOXX50E  Euro Stoxx 50 index               — native index,  EUR
-//  EMIM.AS    iShares Core MSCI EM IMI UCITS    — Euronext AMS,  EUR
-//  VWCE.DE    Vanguard FTSE All-World UCITS ETF — Xetra,         EUR
-//  GLD        SPDR Gold Shares                  — NYSE Arca,     USD
-//  SLV        iShares Silver Trust              — NYSE Arca,     USD
+//  SXR8.DE    iShares Core S&P 500 UCITS ETF      — Xetra,         EUR, TER 0.07%
+//  EXW1.DE    iShares Core Euro Stoxx 50 UCITS ETF — Xetra,         EUR, TER 0.10%
+//  EMIM.AS    iShares Core MSCI EM IMI UCITS ETF   — Euronext AMS,  EUR, TER 0.18%
+//  VWCE.DE    Vanguard FTSE All-World UCITS ETF    — Xetra,         EUR, TER 0.22%
+//  EXS1.DE    iShares Physical Gold ETC            — Xetra,         EUR, TER 0.12%
+//  PHAG.AS    WisdomTree Physical Silver ETC       — Euronext AMS,  EUR, ~1 oz/share
 MarketItem markets[MARKET_COUNT] = {
-    { "S&P 500",   "SXR8.DE",      0x33CCFF, 0, 0, 0, false, false },
-    { "STOXX 50",  "%5ESTOXX50E",  0x33CCFF, 0, 0, 0, false, false },
-    { "Emrg Mkt",  "EMIM.AS",      0x33CCFF, 0, 0, 0, false, false },
-    { "All World", "VWCE.DE",      0x44BBFF, 0, 0, 0, false, false },
-    { "Gold",      "GLD",          0xFFAA33, 0, 0, 0, false, false },
-    { "Silver",    "SLV",          0xCCDDEE, 0, 0, 0, false, false },
+    { "S&P 500",   "SXR8.DE",  0x33CCFF, 0, 0, 0, false, false },
+    { "STOXX 50",  "EXW1.DE",  0x33CCFF, 0, 0, 0, false, false },
+    { "Emrg Mkt",  "EMIM.AS",  0x33CCFF, 0, 0, 0, false, false },
+    { "All World", "VWCE.DE",  0x44BBFF, 0, 0, 0, false, false },
+    { "Gold",      "EXS1.DE",  0xFFAA33, 0, 0, 0, false, false },
+    { "Silver",    "PHAG.AS",  0xCCDDEE, 0, 0, 0, false, false },
 };
 
 float tempC    = 0.0f;
