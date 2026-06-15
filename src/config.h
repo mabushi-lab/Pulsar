@@ -30,7 +30,7 @@ const float WEATHER_LON =  4.7005f;
 const int MKT_PRE_START  =  7 * 60;        // 07:00 pre-trading starts
 const int MKT_OPEN_START =  9 * 60;        // 09:00 continuous trading
 const int MKT_OPEN_END   = 17 * 60 + 30;   // 17:30 market closes
-const int MKT_POST_END   = 22 * 60;        // 22:00 after-hours end
+const int MKT_POST_END   = 20 * 60;        // 20:00 after-hours end (Xetra post-trading closes)
 const int MKT_DAY_MINS   = 24 * 60;        // 1440
 
 // Three columns; x=107 and x=212 are 1-px vertical dividers
