@@ -43,6 +43,14 @@ const uint32_t MKT_SYMBOL_GAP_MS = 250UL;
 const uint32_t WX_REFRESH_MS  = 600000UL;   // 10 min
 const uint32_t WIFI_RETRY_MS  =  30000UL;   // 30 s between reconnect attempts
 
+// ── Display orientation ───────────────────────────────────────────────────────
+// With offset_rotation = 1 in the panel config, 0 and 2 are the two landscape
+// orientations and are 180° apart; 1 and 3 are the portrait pair. Flip between
+// 0 and 2 to turn the image the other way up (USB port left vs right).
+// The panel is centred in the controller's 240px-wide RAM (35 + 170 + 35), so
+// the column offset is symmetric and needs no adjustment when you flip.
+const int DISPLAY_ROTATION = 0;
+
 // Index of the instrument shown in the single-instrument view.
 const int SILVER_MARKET_IDX = 5;
 
