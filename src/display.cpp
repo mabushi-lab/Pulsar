@@ -57,7 +57,7 @@ static uint32_t       s_flashEnd[MARKET_COUNT]   = {};
 
 // ── View mode ─────────────────────────────────────────────────────────────────
 static bool s_silverView = false;
-static const int SILVER_IDX = 5;
+static const int SILVER_IDX = SILVER_MARKET_IDX;
 
 // ── Refresh countdown ─────────────────────────────────────────────────────────
 static int s_refreshCountdown = -1;
@@ -81,10 +81,6 @@ void displayInit() {
     lcd.setBrightness(255);
 }
 
-void displaySetBrightness(bool full) {
-    lcd.setBrightness(full ? 255 : 60);
-}
-
 void displayCycleBrightness() {
     static const uint8_t levels[] = { 255, 70, 0 };
     static int lvl = 0;
@@ -94,7 +90,7 @@ void displayCycleBrightness() {
 
 // ── Boot animations ───────────────────────────────────────────────────────────
 
-// Typewriter title + subtitle. Called before connectWiFi().
+// Typewriter title + subtitle. Called before the Wi-Fi association starts.
 void animSplash() {
     lcd.fillScreen(C_BG);
 
@@ -134,7 +130,7 @@ void animSplash() {
     lcd.drawString("Connecting to WiFi...", W / 2, noteY);
 }
 
-// Staggered panel reveal. Called after connectWiFi() + setupServer().
+// Staggered panel reveal. Called once the link is up and the server is listening.
 void animRevealMain() {
     // Quick flash to signal transition
     lcd.fillScreen(0x0F1E30);
@@ -201,8 +197,9 @@ void animTick() {
 void drawHeader() {
     lcd.fillRect(0, 0, W, HDR_H, C_HDR);
 
-    time_t     epoch = ntp.getEpochTime();
-    struct tm *t     = localtime(&epoch);
+    struct tm tmNow;
+    const bool haveTime = localNow(&tmNow);
+    const struct tm* t  = &tmNow;
 
     // Time: HH:MM with blinking colon (off on odd seconds)
     lcd.setFont(&fonts::Font2);
@@ -210,8 +207,14 @@ void drawHeader() {
     lcd.setTextDatum(lgfx::middle_left);
 
     char hBuf[3], mBuf[3];
-    snprintf(hBuf, sizeof(hBuf), "%02d", t->tm_hour);
-    snprintf(mBuf, sizeof(mBuf), "%02d", t->tm_min);
+    if (haveTime) {
+        snprintf(hBuf, sizeof(hBuf), "%02d", t->tm_hour);
+        snprintf(mBuf, sizeof(mBuf), "%02d", t->tm_min);
+    } else {
+        // Before the first SNTP reply, show --:-- rather than a confident 01:00.
+        snprintf(hBuf, sizeof(hBuf), "--");
+        snprintf(mBuf, sizeof(mBuf), "--");
+    }
 
     int tx = 5;
     lcd.setTextColor(C_DATE, C_HDR);
@@ -219,7 +222,7 @@ void drawHeader() {
     tx += lcd.textWidth(hBuf);
 
     // Colon: draw in header-bg colour on odd seconds = effectively invisible
-    lcd.setTextColor((t->tm_sec % 2 == 0) ? C_DATE : C_HDR, C_HDR);
+    lcd.setTextColor((!haveTime || t->tm_sec % 2 == 0) ? C_DATE : C_HDR, C_HDR);
     lcd.drawString(":", tx, HDR_H / 2);
     tx += lcd.textWidth(":");
 
@@ -228,7 +231,8 @@ void drawHeader() {
     tx += lcd.textWidth(mBuf);
 
     char dateBuf[14];
-    strftime(dateBuf, sizeof(dateBuf), "  %a %b %d", t);
+    if (haveTime) strftime(dateBuf, sizeof(dateBuf), "  %a %b %d", t);
+    else          snprintf(dateBuf, sizeof(dateBuf), "  syncing");
     lcd.drawString(dateBuf, tx, HDR_H / 2);
 
     // WiFi dot: breathe between dim and bright green over a 3s cycle
@@ -237,12 +241,14 @@ void drawHeader() {
     uint8_t  bright = (cycle < 1500)
         ? (uint8_t)((cycle * 210u) / 1500u)
         : (uint8_t)(((3000u - cycle) * 210u) / 1500u);
-    uint32_t dotColor = (WiFi.status() == WL_CONNECTED)
+    uint32_t dotColor = wifiConnected()
         ? lerpColor(0x004422, C_WIFI_OK, (uint8_t)(45u + bright))
         : C_WIFI_ERR;
     lcd.fillCircle(W - 6, HDR_H / 2, 3, dotColor);
 
-    // Weather — right-aligned before the dot
+    // Weather — right-aligned before the dot.
+    // A failed fetch used to draw nothing at all, which is indistinguishable
+    // from "this build has no weather"; show a muted placeholder instead.
     if (wxCode >= 0) {
         char wx[22];
         // '\xB0' (degree) is outside LovyanGFX bitmap font range → renders as square.
@@ -251,6 +257,10 @@ void drawHeader() {
         lcd.setTextColor(C_WEATHER, C_HDR);
         lcd.setTextDatum(lgfx::middle_right);
         lcd.drawString(wx, W - 14, HDR_H / 2);
+    } else if (wxFetched) {
+        lcd.setTextColor(C_MUTED, C_HDR);
+        lcd.setTextDatum(lgfx::middle_right);
+        lcd.drawString("wx --", W - 14, HDR_H / 2);
     }
 }
 
@@ -291,6 +301,9 @@ void drawMarketPanel(int idx) {
         lcd.drawString("Loading...", cx, y + ROW_H / 2);
         return;
     }
+    // "Offline" only when nothing was ever fetched. A later failure keeps the
+    // last good price and dims it, so one rate-limited request no longer wipes
+    // the panel of information it already has.
     if (!m.ok) {
         lcd.setTextColor(C_DOWN, C_PANEL);
         lcd.setTextDatum(lgfx::middle_center);
@@ -302,7 +315,7 @@ void drawMarketPanel(int idx) {
     char priceBuf[12];
     fmtPrice(priceBuf, sizeof(priceBuf), m.price);
     lcd.setFont(&fonts::Font4);
-    lcd.setTextColor(C_PRICE, C_PANEL);
+    lcd.setTextColor(m.stale ? C_DATE : C_PRICE, C_PANEL);
     lcd.setTextDatum(lgfx::top_center);
     lcd.drawString(priceBuf, cx, y + 18);
 
@@ -310,52 +323,92 @@ void drawMarketPanel(int idx) {
     char changeBuf[10];
     snprintf(changeBuf, sizeof(changeBuf), "%+.2f%%", m.changePct);
     lcd.setFont(&fonts::Font2);
-    lcd.setTextColor(m.changePct >= 0 ? C_UP : C_DOWN, C_PANEL);
+    lcd.setTextColor(m.stale ? C_MUTED : (m.changePct >= 0 ? C_UP : C_DOWN), C_PANEL);
     lcd.setTextDatum(lgfx::top_center);
     lcd.drawString(changeBuf, cx, y + 46);
+
+    // A single dim pixel-dot marks the panel as showing a last-known value.
+    if (m.stale) lcd.fillCircle(x + w - 5, y + 5, 2, C_MUTED);
 }
 
 void drawAllMarkets() {
     for (int i = 0; i < MARKET_COUNT; i++) drawMarketPanel(i);
 }
 
-// 4-phase market session bar (Euronext / Xetra, CET/CEST).
+// Market session bar, rendered by sweeping phaseAtMinute() across the day.
+// It follows whichever instrument is on screen: the shared Euronext session in
+// the 6-market grid, and the single instrument's own session in the large view.
+static uint32_t phaseColor(MarketPhase p, bool active) {
+    switch (p) {
+        case PHASE_PRE:    return active ? 0xFFAA00 : 0x2E1A00;
+        case PHASE_OPEN:   return active ? 0x00CC44 : 0x002E10;
+        case PHASE_POST:   return active ? 0x3399CC : 0x101E33;
+        case PHASE_CLOSED:
+        default:           return 0x0E1520;
+    }
+}
+
+static const char* phaseName(MarketPhase p) {
+    switch (p) {
+        case PHASE_PRE:  return "PRE-MKT";
+        case PHASE_OPEN: return "OPEN";
+        case PHASE_POST: return "AFTER HRS";
+        default:         return "CLOSED";
+    }
+}
+
+const TradingSession& displayedSession() {
+    return (s_silverView && markets[SILVER_IDX].session)
+        ? *markets[SILVER_IDX].session
+        : SESSION_EQUITY;
+}
+
 void drawProgress() {
     lcd.fillRect(0, PRG_Y, W, PRG_H, C_BG);
 
-    time_t     epoch   = ntp.getEpochTime();
-    struct tm *t       = localtime(&epoch);
-    int        curMin  = t->tm_hour * 60 + t->tm_min;
-    bool       weekend = (t->tm_wday == 0 || t->tm_wday == 6);
+    struct tm t;
+    if (!localNow(&t)) {
+        // No clock yet — a progress bar drawn from epoch 0 would be a lie.
+        lcd.setFont(&fonts::Font2);
+        lcd.setTextSize(1);
+        lcd.setTextColor(C_MUTED, C_BG);
+        lcd.setTextDatum(lgfx::top_center);
+        lcd.drawString("waiting for time sync", W / 2, PRG_Y + 9);
+        return;
+    }
 
-    auto xAt = [](int m) -> int { return (int)((long)m * W / MKT_DAY_MINS); };
+    const TradingSession& sess = displayedSession();
+    const int  wday   = t.tm_wday;
+    const int  curMin = t.tm_hour * 60 + t.tm_min;
+    const MarketPhase curPhase = phaseAtMinute(sess, wday, curMin);
 
     const int by = PRG_Y;
     const int bh = 8;
+    auto xAt = [](int m) -> int { return (int)((long)m * W / MKT_DAY_MINS); };
 
-    struct Seg { int s, e; uint32_t dim, bright; } segs[5] = {
-        { 0,              MKT_PRE_START,  0x0E1520, 0x0E1520 },
-        { MKT_PRE_START,  MKT_OPEN_START, 0x2E1A00, 0xFFAA00 },
-        { MKT_OPEN_START, MKT_OPEN_END,   0x002E10, 0x00CC44 },
-        { MKT_OPEN_END,   MKT_POST_END,   0x101E33, 0x3399CC },
-        { MKT_POST_END,   MKT_DAY_MINS,   0x0E1520, 0x0E1520 },
-    };
+    // Sweep the day in runs of equal phase, so a 4-phase exchange day and a
+    // 24/5 session with a maintenance break both fall out of the same code.
+    int         runStart = 0;
+    MarketPhase runPhase = phaseAtMinute(sess, wday, 0);
+    bool        allClosed = true;
 
-    for (int i = 0; i < 5; i++) {
-        int      x1     = xAt(segs[i].s);
-        int      x2     = (i == 4) ? W : xAt(segs[i].e);
-        bool     active = !weekend && curMin >= segs[i].s && curMin < segs[i].e;
-        lcd.fillRect(x1, by, x2 - x1, bh, active ? segs[i].bright : segs[i].dim);
+    for (int m = 1; m <= MKT_DAY_MINS; m++) {
+        const MarketPhase p = (m < MKT_DAY_MINS) ? phaseAtMinute(sess, wday, m) : PHASE_CLOSED;
+        if (m == MKT_DAY_MINS || p != runPhase) {
+            const int  x1     = xAt(runStart);
+            const int  x2     = (m == MKT_DAY_MINS) ? W : xAt(m);
+            const bool active = (curMin >= runStart && curMin < m);
+            if (x2 > x1) lcd.fillRect(x1, by, x2 - x1, bh, phaseColor(runPhase, active));
+            if (runPhase != PHASE_CLOSED) allClosed = false;
+            if (runStart > 0) lcd.drawFastVLine(x1, by, bh, 0x2A4A6A);   // phase boundary
+            runStart = m;
+            runPhase = p;
+        }
     }
 
-    // Phase boundary marks
-    int bounds[4] = { MKT_PRE_START, MKT_OPEN_START, MKT_OPEN_END, MKT_POST_END };
-    for (int i = 0; i < 4; i++)
-        lcd.drawFastVLine(xAt(bounds[i]), by, bh, 0x2A4A6A);
-
     // Glow cursor: flanking pixels dimmer, centre pixel bright white
-    if (!weekend) {
-        int cx = xAt(curMin);
+    {
+        const int cx = xAt(curMin);
         if (cx > 1 && cx < W - 2) {
             lcd.drawFastVLine(cx - 1, by, bh, 0x224433);
             lcd.drawFastVLine(cx,     by, bh, 0xFFFFFF);
@@ -363,35 +416,43 @@ void drawProgress() {
         }
     }
 
-    // Status label (Font2, at PRG_Y+9 — fits exactly to screen bottom)
-    char     label[32];
+    // Minutes until the phase changes. Scans forward through the week so a
+    // Sunday-evening open or a Friday close is counted correctly rather than
+    // being clamped at midnight.
+    int minsLeft = 0;
+    {
+        int w = wday, m = curMin;
+        const int limit = 8 * MKT_DAY_MINS;   // a week and a day is always enough
+        while (minsLeft < limit) {
+            if (++m >= MKT_DAY_MINS) { m = 0; w = (w + 1) % 7; }
+            minsLeft++;
+            if (phaseAtMinute(sess, w, m) != curPhase) break;
+        }
+    }
+
+    char     label[40];
     uint32_t labelColor;
+    switch (curPhase) {
+        case PHASE_PRE:  labelColor = 0xFFAA00; break;
+        case PHASE_OPEN: labelColor = C_UP;     break;
+        case PHASE_POST: labelColor = 0x3399CC; break;
+        default:         labelColor = C_MUTED;  break;
+    }
 
-    auto fmt = [](char* buf, const char* phase, int minsLeft) {
-        if (minsLeft >= 60)
-            snprintf(buf, 32, "%s  %dh %02dm left", phase, minsLeft/60, minsLeft%60);
-        else
-            snprintf(buf, 32, "%s  %dm left", phase, minsLeft);
-    };
+    // In the single-instrument view the bar describes one venue, so name it —
+    // otherwise a Euronext timeline under a silver price reads as a claim about
+    // silver itself.
+    char prefix[12] = "";
+    if (s_silverView) snprintf(prefix, sizeof(prefix), "%s  ", sess.label);
 
-    if (weekend) {
-        snprintf(label, sizeof(label), "CLOSED  weekend");
-        labelColor = C_MUTED;
-    } else if (curMin < MKT_PRE_START) {
-        fmt(label, "CLOSED", MKT_PRE_START - curMin);
-        labelColor = C_MUTED;
-    } else if (curMin < MKT_OPEN_START) {
-        fmt(label, "PRE-MKT", MKT_OPEN_START - curMin);
-        labelColor = 0xFFAA00;
-    } else if (curMin < MKT_OPEN_END) {
-        fmt(label, "OPEN", MKT_OPEN_END - curMin);
-        labelColor = C_UP;
-    } else if (curMin < MKT_POST_END) {
-        fmt(label, "AFTER HRS", MKT_POST_END - curMin);
-        labelColor = 0x3399CC;
+    if (allClosed) {
+        snprintf(label, sizeof(label), "%s%s  weekend", prefix, phaseName(curPhase));
+    } else if (minsLeft >= 60) {
+        snprintf(label, sizeof(label), "%s%s  %dh %02dm left",
+                 prefix, phaseName(curPhase), minsLeft / 60, minsLeft % 60);
     } else {
-        fmt(label, "CLOSED", MKT_DAY_MINS - curMin + MKT_PRE_START);
-        labelColor = C_MUTED;
+        snprintf(label, sizeof(label), "%s%s  %dm left",
+                 prefix, phaseName(curPhase), minsLeft);
     }
 
     lcd.setFont(&fonts::Font2);
@@ -436,9 +497,13 @@ void drawPomodoro(int secsLeft, int totalSecs, bool isWork, int state, int sessi
         if (filled > 0) lcd.fillRect(0, 0, filled, 8, barColor);
     }
 
-    // Big countdown (Font7, centred at y=70)
-    char tbuf[6];
-    snprintf(tbuf, sizeof(tbuf), "%02d:%02d", secsLeft / 60, secsLeft % 60);
+    // Big countdown (Font7, centred at y=70).
+    // Clamped so a bad caller can never overflow the MM:SS field.
+    if (secsLeft < 0) secsLeft = 0;
+    int mm = secsLeft / 60; if (mm > 99) mm = 99;
+    int ss = secsLeft % 60;
+    char tbuf[8];
+    snprintf(tbuf, sizeof(tbuf), "%02d:%02d", mm, ss);
     lcd.setFont(&fonts::Font7);
     lcd.setTextSize(1);
     lcd.setTextDatum(lgfx::middle_center);
@@ -533,11 +598,11 @@ void drawSilverOnly() {
     // Thin rule below the label
     lcd.drawFastHLine(cx - 80, y + 34, 160, C_DIV);
 
-    // Price — Font7, dominant
+    // Price — Font7, dominant (dimmed when showing a last-known value)
     char priceBuf[12];
     fmtPrice(priceBuf, sizeof(priceBuf), m.price);
     lcd.setFont(&fonts::Font7);
-    lcd.setTextColor(C_PRICE, C_BG);
+    lcd.setTextColor(m.stale ? C_DATE : C_PRICE, C_BG);
     lcd.setTextDatum(lgfx::middle_center);
     lcd.drawString(priceBuf, cx, y + 66);
 
@@ -545,15 +610,7 @@ void drawSilverOnly() {
     char changeBuf[10];
     snprintf(changeBuf, sizeof(changeBuf), "%+.2f%%", m.changePct);
     lcd.setFont(&fonts::Font4);
-    lcd.setTextColor(m.changePct >= 0 ? C_UP : C_DOWN, C_BG);
+    lcd.setTextColor(m.stale ? C_MUTED : (m.changePct >= 0 ? C_UP : C_DOWN), C_BG);
     lcd.setTextDatum(lgfx::bottom_center);
     lcd.drawString(changeBuf, cx, y + h - 6);
-}
-
-void drawAll() {
-    lcd.fillScreen(C_BG);
-    drawHeader();
-    if (s_silverView) drawSilverOnly(); else drawAllMarkets();
-    drawProgress();
-    drawDividers();
 }

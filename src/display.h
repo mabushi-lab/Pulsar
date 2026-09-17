@@ -1,7 +1,6 @@
 #pragma once
 
 void displayInit();
-void displaySetBrightness(bool full);
 
 // ── Boot sequence ─────────────────────────────────────────────────────────────
 void animSplash();       // typewriter title + "connecting" before WiFi
@@ -12,7 +11,7 @@ void triggerPanelFlash(int idx);  // call before drawAllMarkets() on each fetch
 void animTick();                  // call every loop iteration
 
 // ── Brightness ───────────────────────────────────────────────────────────────
-void displayCycleBrightness();   // cycles full → dim → off → full
+void displayCycleBrightness();   // cycles full (255) → dim (70) → off (0) → full
 
 // ── View mode ─────────────────────────────────────────────────────────────────
 // Toggle between 6-market grid and a single large Silver panel.
@@ -31,8 +30,8 @@ void drawHeader();
 void drawMarketPanel(int idx);
 void drawAllMarkets();
 void drawProgress();
+const struct TradingSession& displayedSession();
 void drawDividers();
-void drawAll();
 
 // ── Refresh countdown ─────────────────────────────────────────────────────────
 // Call every second with seconds until the next market fetch.

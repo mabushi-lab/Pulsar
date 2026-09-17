@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <WiFi.h>
 #include "config.h"
 #include "display.h"
 #include "data.h"
@@ -55,13 +56,17 @@ static void checkButtons() {
     // ── BOOT released ─────────────────────────────────────────────────────────
     if (prevBoot == LOW && boot == HIGH) {
         if (millis() - bootDown >= 600) {
-            // Long press: toggle 6-market / Silver-only view
-            bool sv = !displayIsSilverView();
-            displaySetSilverView(sv);
-            if (sv) { drawSilverOnly(); } else { drawAllMarkets(); }
-            drawDividers();
+            // Long press: toggle 6-market / Silver-only view.
+            // Only in market mode — otherwise these draws paint market panels
+            // over the Pomodoro screen, and a paused/idle timer never redraws.
+            if (appMode == APP_MARKET) {
+                bool sv = !displayIsSilverView();
+                displaySetSilverView(sv);
+                if (sv) { drawSilverOnly(); } else { drawAllMarkets(); }
+                drawDividers();
+            }
         } else {
-            // Short press: cycle brightness
+            // Short press: cycle brightness (safe in either mode)
             displayCycleBrightness();
         }
     }
@@ -95,6 +100,19 @@ static void checkButtons() {
     prevUser = user;
 }
 
+// ── Refresh scheduling ────────────────────────────────────────────────────────
+// Both the interval and the footer countdown come from the live session phase,
+// so the number on screen is always the number the scheduler is using.
+static uint32_t currentRefreshMs() { return marketsRefreshMs(); }
+
+static int refreshCountdownSecs(uint32_t now, uint32_t lastMarkets) {
+    if (marketsCycleActive()) return 0;
+    const uint32_t interval = currentRefreshMs();
+    const uint32_t elapsed  = (lastMarkets == 0) ? interval : (now - lastMarkets);
+    if (elapsed >= interval) return 0;
+    return (int)((interval - elapsed) / 1000UL);
+}
+
 // ── Entry points ──────────────────────────────────────────────────────────────
 void setup() {
     Serial.begin(115200);
@@ -108,9 +126,13 @@ void setup() {
     displayInit();
     animSplash();
 
-    connectWiFi();
+    wifiBegin();
+    wifiWaitConnected(20000);   // the splash already says "Connecting..."
+    timeBegin();
     setupServer();
 
+    // No fetching here — loop() owns all scheduling, and its first pass starts a
+    // market cycle immediately, so panels fill in one by one behind the reveal.
     animRevealMain();
 }
 
@@ -118,7 +140,7 @@ void loop() {
     checkButtons();
     server.handleClient();
 
-    uint32_t now = millis();
+    const uint32_t now = millis();
 
     // ── Pomodoro mode ─────────────────────────────────────────────────────────
     if (appMode == APP_POMODORO) {
@@ -152,69 +174,66 @@ void loop() {
     static uint32_t lastSec     = 0;
     static uint32_t lastWeather = 0;
     static uint32_t lastMarkets = 0;
-    static bool     wifiWas     = (WiFi.status() == WL_CONNECTED);
+    static uint32_t lastSymbol  = 0;
+    // Seeded from the state setup() left behind, so the first pass does not
+    // mistake "already connected" for a fresh link and replay the reveal.
+    static bool     wifiWas     = wifiConnected();
 
-    bool wifiOk = (WiFi.status() == WL_CONNECTED);
+    // Non-blocking: returns at once whether or not it is connected.
+    wifiMaintain(now);
 
-    // WiFi reconnect
-    if (!wifiOk) {
-        static uint32_t lastRetry = 0;
-        if (now - lastRetry > 30000) {
-            lastRetry = now;
-            connectWiFi();
-            if (WiFi.status() == WL_CONNECTED) { animRevealMain(); wifiWas = true; }
-            else                                  drawHeader();
-        }
-        return;
-    }
-    if (!wifiWas) { wifiWas = true; animRevealMain(); }
-
-    // Manual market refresh
-    if (refreshRequested) {
-        refreshRequested = false;
-        lastMarkets = now;
-        fetchMarkets();
-        if (displayIsSilverView()) {
-            triggerPanelFlash(5);
-            drawSilverOnly();
-        } else {
-            for (int i = 0; i < MARKET_COUNT; i++) triggerPanelFlash(i);
-            drawAllMarkets();
-        }
-        drawDividers();
+    const bool wifiOk = wifiConnected();
+    if (wifiOk != wifiWas) {
+        wifiWas = wifiOk;
+        if (wifiOk) animRevealMain();
+        else        drawHeader();
     }
 
-    // 1-second tick: header + footer
+    // Header and footer keep ticking even with no link, so the device never
+    // looks frozen — only the fetches below are gated on connectivity.
     if (now - lastSec >= 1000) {
         lastSec = now;
-        ntp.update();
         drawHeader();
-
-        // Countdown to next market fetch
-        uint32_t elapsed = (lastMarkets == 0) ? 15000U : (now - lastMarkets);
-        int secsLeft = (elapsed >= 15000U) ? 0 : (int)((15000U - elapsed) / 1000U);
-        displaySetRefreshCountdown(secsLeft);
+        displaySetRefreshCountdown(refreshCountdownSecs(now, lastMarkets));
         drawProgress();
     }
 
-    // Weather — every 10 minutes
-    if (lastWeather == 0 || now - lastWeather >= 600000UL) {
+    if (!wifiOk) return;
+
+    // Manual refresh from the USER button or the web endpoint.
+    if (refreshRequested && !marketsCycleActive()) {
+        refreshRequested = false;
+        marketsStartCycle();
+    }
+
+    // Start a market cycle when the current phase says one is due.
+    if (!marketsCycleActive() &&
+        (lastMarkets == 0 || now - lastMarkets >= currentRefreshMs())) {
+        marketsStartCycle();
+    }
+
+    // Weather — held off while a market cycle is running so that no single
+    // pass ever performs two blocking requests back to back.
+    if (!marketsCycleActive() &&
+        (lastWeather == 0 || now - lastWeather >= WX_REFRESH_MS)) {
         lastWeather = now;
         fetchWeather();
         drawHeader();
     }
 
-    // Markets — every 15 seconds (matches Yahoo Finance's data refresh rate)
-    if (lastMarkets == 0 || now - lastMarkets >= 15000UL) {
-        lastMarkets = now;
-        fetchMarkets();
-        if (displayIsSilverView()) {
-            triggerPanelFlash(5);
-            drawSilverOnly();
-        } else {
-            for (int i = 0; i < MARKET_COUNT; i++) triggerPanelFlash(i);
-            drawAllMarkets();
+    // Advance the cycle one symbol per pass; each panel updates as it lands.
+    if (marketsCycleActive() && now - lastSymbol >= MKT_SYMBOL_GAP_MS) {
+        lastSymbol = now;
+        const int idx = marketsFetchNext();
+        if (idx >= 0) {
+            if (displayIsSilverView()) {
+                if (idx == SILVER_MARKET_IDX) { triggerPanelFlash(idx); drawSilverOnly(); }
+            } else {
+                triggerPanelFlash(idx);
+                drawMarketPanel(idx);
+            }
+            drawDividers();
         }
-        drawDividers();
+        if (!marketsCycleActive()) lastMarkets = now;   // cycle complete
     }
 }

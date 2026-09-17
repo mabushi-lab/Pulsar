@@ -20,18 +20,59 @@ const int DIV3_Y = 146;
 const int PRG_Y  = 147;
 const int PRG_H  = 23;   // 8px bar + 1px gap + 14px Font2 label = 23px
 
+// ── Time ──────────────────────────────────────────────────────────────────────
+// POSIX TZ rule: CET in winter, CEST in summer, switching on the last Sunday
+// of March and October. DST is handled by the C library, so there is no
+// UTC offset to maintain by hand any more.
+#define TZ_INFO      "CET-1CEST,M3.5.0,M10.5.0/3"
+#define NTP_SERVER_1 "pool.ntp.org"
+#define NTP_SERVER_2 "time.cloudflare.com"
+
+// ── Refresh intervals ─────────────────────────────────────────────────────────
+// Polling adapts to the session: prices only move during continuous trading,
+// so hammering Yahoo overnight and at weekends buys nothing and invites 429s.
+// The footer countdown is derived from the same values, so they cannot drift.
+const uint32_t MKT_REFRESH_OPEN_MS   =  15000UL;   // 15 s  — continuous trading
+const uint32_t MKT_REFRESH_EDGE_MS   =  60000UL;   //  1 min — pre-market / after-hours
+const uint32_t MKT_REFRESH_CLOSED_MS = 900000UL;   // 15 min — closed / weekend
+
+// A refresh cycle fetches one symbol per pass rather than all six inline, so
+// loop() keeps servicing buttons, the clock and the web server throughout.
+const uint32_t MKT_SYMBOL_GAP_MS = 250UL;
+
+const uint32_t WX_REFRESH_MS  = 600000UL;   // 10 min
+const uint32_t WIFI_RETRY_MS  =  30000UL;   // 30 s between reconnect attempts
+
+// Index of the instrument shown in the single-instrument view.
+const int SILVER_MARKET_IDX = 5;
+
 // ── Weather location ──────────────────────────────────────────────────────────
 const float WEATHER_LAT = 50.8798f;  // Leuven, Belgium
 const float WEATHER_LON =  4.7005f;
 
-// ── Market session (Euronext / Xetra, CET or CEST) ───────────────────────────
-// Ensure UTC_OFFSET_SEC in secrets.h matches current offset:
-//   CET  winter → 3600   CEST summer → 7200
-const int MKT_PRE_START  =  7 * 60;        // 07:00 pre-trading starts
-const int MKT_OPEN_START =  9 * 60;        // 09:00 continuous trading
-const int MKT_OPEN_END   = 17 * 60 + 30;   // 17:30 market closes
-const int MKT_POST_END   = 20 * 60;        // 20:00 after-hours end (Xetra post-trading closes)
-const int MKT_DAY_MINS   = 24 * 60;        // 1440
+// ── Trading sessions ──────────────────────────────────────────────────────────
+// All boundaries are wall-clock minutes in TZ_INFO, so they follow DST with it.
+const int MKT_DAY_MINS = 24 * 60;          // 1440
+
+// Equity / ETC session — Xetra and Euronext Amsterdam share these hours.
+const int EQ_PRE_START  =  7 * 60;         // 07:00 pre-trading starts
+const int EQ_OPEN_START =  9 * 60;         // 09:00 continuous trading
+const int EQ_OPEN_END   = 17 * 60 + 30;    // 17:30 market closes
+const int EQ_POST_END   = 20 * 60;         // 20:00 after-hours end (Xetra post-trading)
+
+// Near-24/5 metals session (COMEX-style), expressed in CET/CEST:
+//   opens   Sunday  23:00, closes Friday 22:00
+//   daily maintenance break 22:00 -> 23:00
+// Not used by the default instrument list — PHAG.AS is a Euronext-listed ETC
+// and genuinely does close at 17:30. Point a MarketItem at SESSION_METALS only
+// if you also switch its symbol to something that actually trades around the
+// clock, or the bar will claim OPEN while the price sits frozen.
+const int MT_BREAK_START = 22 * 60;        // 22:00
+const int MT_BREAK_END   = 23 * 60;        // 23:00
+const int MT_WEEK_OPEN_WDAY  = 0;          // Sunday
+const int MT_WEEK_OPEN_MIN   = 23 * 60;    // 23:00
+const int MT_WEEK_CLOSE_WDAY = 5;          // Friday
+const int MT_WEEK_CLOSE_MIN  = 22 * 60;    // 22:00
 
 // Three columns; x=107 and x=212 are 1-px vertical dividers
 const int COL_X[3] = { 0, 108, 213 };
