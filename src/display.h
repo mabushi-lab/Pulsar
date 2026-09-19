@@ -5,7 +5,6 @@ struct TradingSession;
 
 void displayInit();
 void displayApplyRotation();
-void displaySetBrightnessValue(uint8_t b);
 void displayRefreshAll();                 // repaint the current view, no animation
 
 // ── Boot sequence ─────────────────────────────────────────────────────────────
@@ -52,7 +51,6 @@ int  displaySlotForPosition(int posIndex);// -1 when not on the visible page
 // ── Draws ─────────────────────────────────────────────────────────────────────
 void drawHeader();
 void drawPositionPanel(int slot);
-void drawPositions();
 void drawDetail();
 void drawPortfolio();
 void drawAllocation();
@@ -60,8 +58,4 @@ void drawLoan();
 void drawFooter();
 void drawDividers();
 
-bool portfolioRevealActive();
-void portfolioRevealTick();
-
-const TradingSession& displayedSession();
 void displaySetRefreshCountdown(int secs);

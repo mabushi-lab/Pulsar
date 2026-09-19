@@ -11,7 +11,7 @@ int             historyCount() { return s_count; }
 const DayPoint* historyData()  { return s_points; }
 
 // Days since 2020-01-01. tm_year is years since 1900, tm_yday is 0-based.
-uint16_t historyDayIndex(const struct tm& t) {
+static uint16_t historyDayIndex(const struct tm& t) {
     const int year = t.tm_year + 1900;
     long days = 0;
     for (int y = 2020; y < year; y++) {

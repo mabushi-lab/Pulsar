@@ -72,6 +72,11 @@ void fmtPct(char* buf, size_t n, double pct, int decimals);
 // survives, because '-' is one of the glyphs it has.
 void fmtSevenSeg(char* buf, size_t n, const char* src);
 
+// Drops a trailing '%'. Drift is in percentage POINTS, not percent, so the sign
+// is kept and the unit removed. fmtPct can return "--", which has no '%' to
+// drop - chopping the last character blindly would leave a bare "-".
+void stripPercent(char* s);
+
 // ── Incremental refresh ───────────────────────────────────────────────────────
 // One HTTPS request per call so loop() keeps servicing buttons, the clock and
 // the web server while a cycle runs.

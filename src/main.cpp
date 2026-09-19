@@ -1,5 +1,4 @@
 #include <Arduino.h>
-#include <WiFi.h>
 #include "config.h"
 #include "display.h"
 #include "data.h"
@@ -8,7 +7,6 @@
 #include "settings.h"
 #include "fx.h"
 #include "history.h"
-#include "loan.h"
 
 // ── Buttons ───────────────────────────────────────────────────────────────────
 // BOOT  short: brightness            long: next view

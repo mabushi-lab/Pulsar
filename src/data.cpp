@@ -194,6 +194,12 @@ void fmtPct(char* buf, size_t n, double pct, int decimals) {
     snprintf(buf, n, "%+.*f%%", decimals, pct);
 }
 
+void stripPercent(char* s) {
+    if (!s || !s[0]) return;
+    const size_t n = strlen(s);
+    if (s[n - 1] == '%') s[n - 1] = '\0';
+}
+
 void fmtSevenSeg(char* buf, size_t n, const char* src) {
     if (!buf || n == 0) return;
     size_t w = 0;

@@ -44,4 +44,3 @@ int             historyCount();
 const DayPoint* historyData();
 void            historyClear();
 
-uint16_t historyDayIndex(const struct tm& t);

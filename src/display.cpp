@@ -4,7 +4,6 @@
 #include "portfolio.h"
 #include "network.h"
 #include "settings.h"
-#include "fx.h"
 #include "loan.h"
 #include <LovyanGFX.hpp>
 #include <string.h>
@@ -100,11 +99,13 @@ static int positionForSlot(int slot) {
 
 // "Are amounts on screen right now?" — always in mode 2, never in mode 0, and
 // for a few seconds after a USER tap in mode 1.
-bool portfolioRevealActive() {
+static bool portfolioRevealActive() {
     if (settings.amountMode == 0) return false;
     if (settings.amountMode == 2) return true;
     return s_revealUntil != 0 && millis() < s_revealUntil;
 }
+static void drawPositions();      // used by displayRefreshAll, defined below
+
 static void portfolioReveal() {
     if (settings.amountMode == 1) s_revealUntil = millis() + PORTFOLIO_REVEAL_MS;
 }
@@ -154,20 +155,13 @@ void displayUserAction() {
     }
 }
 
-void portfolioRevealTick() {
+static void portfolioRevealTick() {
     if (s_revealUntil != 0 && millis() >= s_revealUntil) {
         s_revealUntil = 0;
         if (s_view == VIEW_PORTFOLIO) { drawPortfolio(); drawDividers(); }
         if (s_view == VIEW_LOAN)      { drawLoan();      drawDividers(); }
         if (s_view == VIEW_ALLOC)     { drawAllocation(); drawDividers(); }
     }
-}
-
-// Drift is in percentage points, not percent, so the trailing '%' is dropped -
-// but only when there is one: fmtPct can legitimately return "--".
-static void stripPercent(char* s) {
-    const size_t len = strlen(s);
-    if (len > 0 && s[len - 1] == '%') s[len - 1] = '\0';
 }
 
 // Integer colour lerp: t=0 → a, t=255 → b
@@ -189,8 +183,6 @@ void displayApplyRotation() {
     lcd.setRotation(settings.rotation);
     lcd.fillScreen(C_BG);
 }
-
-void displaySetBrightnessValue(uint8_t b) { lcd.setBrightness(b); }
 
 // ── Night dimming ─────────────────────────────────────────────────────────────
 // s_lastAuto is the level the SCHEDULE last asked for, not the level the panel
@@ -522,7 +514,7 @@ void drawPositionPanel(int slot) {
     if (p.stale) lcd.fillCircle(x + 5, y + 8, 2, C_MUTED);
 }
 
-void drawPositions() {
+static void drawPositions() {
     clampIndices();
     if (positionCount == 0) {
         lcd.fillRect(0, ROW1_Y, W, DIV3_Y - ROW1_Y, C_BG);
@@ -631,8 +623,8 @@ void drawDetail() {
             char wgtBuf[16], driftBuf[16];
             fmtPct(wgtBuf,   sizeof(wgtBuf),   wgt,   1);
             fmtPct(driftBuf, sizeof(driftBuf), drift, 1);
-            snprintf(line, sizeof(line), "%s   %s of %.0f%%  (%s)",
-                     lead, wgtBuf + 1, p.target, driftBuf);
+            snprintf(line, sizeof(line), "%s   %s of %d%%  (%s)",
+                     lead, wgtBuf + 1, (int)(p.target + 0.5), driftBuf);
             lcd.setTextColor(mag >= 2.0 ? 0xFFAA00 : C_LABEL, C_BG);
         } else {
             char retBuf[16];
@@ -701,6 +693,9 @@ void drawPortfolio() {
                     bad = positions[i].symbol; code = positions[i].lastHttp; break;
                 }
             }
+            // GCC cannot see that `bad` is a char[SYMBOL_MAX] reached through an
+            // array, so it warns here. A bounded copy silences nothing - it only
+            // moves the same warning onto the copy - so the buffer stays simple.
             char msg[64];
             lcd.setTextColor(C_DOWN, C_BG);
             snprintf(msg, sizeof(msg), "no price for %s", bad);
@@ -1071,7 +1066,7 @@ static const char* phaseName(MarketPhase p) {
 // The bar describes the instrument on screen; in the grid it describes the one
 // whose session is most active, so it is never claiming "closed" while
 // something on the page is trading.
-const TradingSession& displayedSession() {
+static const TradingSession& displayedSession() {
     if (s_view == VIEW_DETAIL && positionCount > 0 && s_detail < positionCount
         && positions[s_detail].session)
         return *positions[s_detail].session;

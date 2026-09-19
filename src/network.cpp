@@ -303,8 +303,7 @@ Nothing is sent anywhere; positions are stored on the device and priced with pub
             fmtPct(act,   sizeof(act),   positionSleevePct(p, t), 1);
             fmtPct(tgt,   sizeof(tgt),   positionTargetPct(p, t), 1);
             fmtPct(drift, sizeof(drift), d, 1);
-            if (drift[0] && drift[strlen(drift) - 1] == '%')
-                drift[strlen(drift) - 1] = '\0';           // points, not percent
+            stripPercent(drift);                        // points, not percent
             const double reb = positionRebalanceAmount(p, t);
             fmtMoney(amt, sizeof(amt), reb);
 
