@@ -1,41 +1,51 @@
 #include "data.h"
+#include "portfolio.h"
 #include "network.h"
+#include "settings.h"
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
-
-// ── State ─────────────────────────────────────────────────────────────────────
-// All instruments are on Xetra or Euronext AMS so they share the same
-// trading hours (09:00–17:30 CET) and update together.
-// Yahoo Finance returns 401 for forex crosses (=X), so all symbols must
-// be exchange-traded instruments.
-//
-//  SXR8.DE    iShares Core S&P 500 UCITS ETF      — Xetra,         EUR, TER 0.07%
-//  EXW1.DE    iShares Core Euro Stoxx 50 UCITS ETF — Xetra,         EUR, TER 0.10%
-//  EMIM.AS    iShares Core MSCI EM IMI UCITS ETF   — Euronext AMS,  EUR, TER 0.18%
-//  VWCE.DE    Vanguard FTSE All-World UCITS ETF    — Xetra,         EUR, TER 0.22%
-//  EXS1.DE    iShares Physical Gold ETC            — Xetra,         EUR, TER 0.12%
-//  PHAG.AS    WisdomTree Physical Silver ETC       — Euronext AMS,  EUR, ~1 oz/share
-MarketItem markets[MARKET_COUNT] = {
-    { "S&P 500",   "SXR8.DE",  0x33CCFF, 0, 0, 0, false, false, false, &SESSION_EQUITY },
-    { "STOXX 50",  "EXW1.DE",  0x33CCFF, 0, 0, 0, false, false, false, &SESSION_EQUITY },
-    { "Emrg Mkt",  "EMIM.AS",  0x33CCFF, 0, 0, 0, false, false, false, &SESSION_EQUITY },
-    { "All World", "VWCE.DE",  0x44BBFF, 0, 0, 0, false, false, false, &SESSION_EQUITY },
-    { "Gold",      "EXS1.DE",  0xFFAA33, 0, 0, 0, false, false, false, &SESSION_EQUITY },
-    // PHAG.AS is an ETC on Euronext Amsterdam, not spot silver: it really does
-    // stop trading at 17:30 with everything else. Switching this to
-    // &SESSION_METALS is only correct alongside a symbol that trades 24/5.
-    { "Silver",    "PHAG.AS",  0xCCDDEE, 0, 0, 0, false, false, false, &SESSION_EQUITY },
-};
-
-float tempC    = 0.0f;
-int   wxCode   = -1;
-bool  wxFetched = false;
+#include <string.h>
+#include <strings.h>
+#include <math.h>
 
 // ── Trading sessions ──────────────────────────────────────────────────────────
+const TradingSession SESSION_XETRA = {
+    "XETRA", false,
+    EQ_PRE_START, EQ_OPEN_START, EQ_OPEN_END, EQ_POST_END,
+    0, 0, 0, 0, 0, 0
+};
+
+// Stuttgart and the other German regional venues trade until 22:00.
+const TradingSession SESSION_DE_REG = {
+    "BOERSE DE", false,
+    DE_PRE_START, DE_OPEN_START, DE_OPEN_END, DE_POST_END,
+    0, 0, 0, 0, 0, 0
+};
+
 const TradingSession SESSION_EQUITY = {
     "EURONEXT", false,
     EQ_PRE_START, EQ_OPEN_START, EQ_OPEN_END, EQ_POST_END,
+    0, 0, 0, 0, 0, 0
+};
+
+// London runs 08:00-16:30 local, and London is one hour behind CET all year,
+// so in the device's own timezone it is the same 09:00-17:30 day as Xetra.
+const TradingSession SESSION_LSE = {
+    "LSE", false,
+    EQ_PRE_START, EQ_OPEN_START, EQ_OPEN_END, EQ_POST_END,
+    0, 0, 0, 0, 0, 0
+};
+
+const TradingSession SESSION_EU = {
+    "EUROPE", false,
+    EQ_PRE_START, EQ_OPEN_START, EQ_OPEN_END, EQ_POST_END,
+    0, 0, 0, 0, 0, 0
+};
+
+const TradingSession SESSION_US = {
+    "US", false,
+    US_PRE_START, US_OPEN_START, US_OPEN_END, US_POST_END,
     0, 0, 0, 0, 0, 0
 };
 
@@ -47,22 +57,51 @@ const TradingSession SESSION_METALS = {
     MT_WEEK_CLOSE_WDAY, MT_WEEK_CLOSE_MIN
 };
 
-// Single source of truth for "is this market trading right now". The footer bar
-// is rendered by sweeping this across the day, so the bar, the phase label and
-// the polling rate are all derived from the same function.
+// A wrong guess only affects the footer label and the polling rate, never a
+// price, so a simple suffix test is the right amount of machinery here.
+struct VenueRule { const char* suffix; const TradingSession* session; };
+
+// Ordered as a plain table so adding a venue is a line, not a branch.
+static const VenueRule VENUES[] = {
+    { ".DE", &SESSION_XETRA  },                       // Xetra
+    { ".SG", &SESSION_DE_REG }, { ".F",  &SESSION_DE_REG },   // Stuttgart, Frankfurt
+    { ".BE", &SESSION_DE_REG }, { ".MU", &SESSION_DE_REG },   // Berlin, Munich
+    { ".DU", &SESSION_DE_REG }, { ".HM", &SESSION_DE_REG },   // Duesseldorf, Hamburg
+    { ".AS", &SESSION_EQUITY }, { ".PA", &SESSION_EQUITY },   // Amsterdam, Paris
+    { ".BR", &SESSION_EQUITY }, { ".LS", &SESSION_EQUITY },   // Brussels, Lisbon
+    { ".L",  &SESSION_LSE    },
+    { ".MI", &SESSION_EU     }, { ".MC", &SESSION_EU  },      // Milan, Madrid
+    { ".SW", &SESSION_EU     }, { ".VI", &SESSION_EU  },      // Zurich, Vienna
+    { ".HE", &SESSION_EU     }, { ".ST", &SESSION_EU  },      // Helsinki, Stockholm
+    { ".CO", &SESSION_EU     }, { ".OL", &SESSION_EU  },      // Copenhagen, Oslo
+};
+
+const TradingSession* sessionForSymbol(const char* symbol) {
+    if (!symbol || !symbol[0]) return &SESSION_EU;
+    if (strstr(symbol, "=F")) return &SESSION_METALS;
+
+    const char* dot = strrchr(symbol, '.');
+    if (!dot) return &SESSION_US;            // bare ticker: US listing
+
+    for (size_t i = 0; i < sizeof(VENUES) / sizeof(VENUES[0]); i++)
+        if (!strcasecmp(dot, VENUES[i].suffix)) return VENUES[i].session;
+
+    return &SESSION_EU;                      // unknown venue: a European day, named honestly
+}
+
 MarketPhase phaseAtMinute(const TradingSession& s, int wday, int minute) {
     if (s.continuous) {
-        if (wday == 6) return PHASE_CLOSED;                                   // Saturday
+        if (wday == 6) return PHASE_CLOSED;
         if (wday == s.weekCloseWday && minute >= s.weekCloseMin) return PHASE_CLOSED;
         if (wday == s.weekOpenWday  && minute <  s.weekOpenMin)  return PHASE_CLOSED;
         if (minute >= s.breakStart  && minute <  s.breakEnd)     return PHASE_CLOSED;
-        return PHASE_OPEN;   // continuous venues have no pre/post auction
+        return PHASE_OPEN;
     }
-    if (wday == 0 || wday == 6) return PHASE_CLOSED;                          // weekend
-    if (minute < s.preStart)   return PHASE_CLOSED;
-    if (minute < s.openStart)  return PHASE_PRE;
-    if (minute < s.openEnd)    return PHASE_OPEN;
-    if (minute < s.postEnd)    return PHASE_POST;
+    if (wday == 0 || wday == 6) return PHASE_CLOSED;
+    if (minute < s.preStart)  return PHASE_CLOSED;
+    if (minute < s.openStart) return PHASE_PRE;
+    if (minute < s.openEnd)   return PHASE_OPEN;
+    if (minute < s.postEnd)   return PHASE_POST;
     return PHASE_CLOSED;
 }
 
@@ -72,45 +111,44 @@ MarketPhase sessionPhase(const TradingSession& s, const struct tm& t) {
 
 uint32_t sessionRefreshMs(MarketPhase p) {
     switch (p) {
-        case PHASE_OPEN:            return MKT_REFRESH_OPEN_MS;
+        case PHASE_OPEN:            return settings.refreshOpenMs;
         case PHASE_PRE:
-        case PHASE_POST:            return MKT_REFRESH_EDGE_MS;
-        case PHASE_CLOSED: default: return MKT_REFRESH_CLOSED_MS;
+        case PHASE_POST:            return settings.refreshEdgeMs;
+        case PHASE_CLOSED: default: return settings.refreshClosedMs;
     }
 }
 
-// Poll at whatever rate the most active instrument needs: if one of them trades
-// around the clock, the cycle must keep up with it even when Euronext is shut.
+// Poll at whatever rate the most active position needs: if one trades while the
+// others are shut, the cycle has to keep up with it.
 uint32_t marketsRefreshMs() {
     struct tm t;
-    if (!localNow(&t)) return MKT_REFRESH_OPEN_MS;   // pre-sync: assume the fast rate
+    if (!localNow(&t)) return settings.refreshOpenMs;
+    if (positionCount == 0) return settings.refreshClosedMs;
 
-    uint32_t fastest = MKT_REFRESH_CLOSED_MS;
-    for (int i = 0; i < MARKET_COUNT; i++) {
-        if (!markets[i].session) continue;
-        const uint32_t ms = sessionRefreshMs(sessionPhase(*markets[i].session, t));
+    uint32_t fastest = settings.refreshClosedMs;
+    for (int i = 0; i < positionCount; i++) {
+        const TradingSession* s = positions[i].session ? positions[i].session : &SESSION_EQUITY;
+        const uint32_t ms = sessionRefreshMs(sessionPhase(*s, t));
         if (ms < fastest) fastest = ms;
     }
     return fastest;
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-const char* wmoDesc(int code) {
-    if (code <  0)  return "Unknown";
-    if (code == 0)  return "Clear";
-    if (code <= 2)  return "Mainly Clear";
-    if (code == 3)  return "Overcast";
-    if (code <= 48) return "Foggy";
-    if (code <= 55) return "Drizzle";
-    if (code <= 65) return "Rain";
-    if (code <= 75) return "Snow";
-    if (code <= 82) return "Showers";
-    if (code <= 86) return "Snow Showers";
-    if (code == 95) return "Thunderstorm";
-    if (code <= 99) return "Heavy Storm";
-    return "Unknown";
+bool marketsAllClosed() {
+    struct tm t;
+    if (!localNow(&t)) return false;
+    int considered = 0;
+    for (int i = 0; i < positionCount; i++) {
+        const Position& p = positions[i];
+        if (!positionIsHeld(p)) continue;      // a watchlist row moves no money
+        considered++;
+        const TradingSession* s = p.session ? p.session : &SESSION_EU;
+        if (sessionPhase(*s, t) != PHASE_CLOSED) return false;
+    }
+    return considered > 0;
 }
 
+// ── Formatting ────────────────────────────────────────────────────────────────
 void fmtPrice(char* buf, size_t n, float price) {
     if (price >= 1000) {
         long p = lroundf(price);
@@ -125,63 +163,81 @@ void fmtPrice(char* buf, size_t n, float price) {
     }
 }
 
-// ── Fetch ─────────────────────────────────────────────────────────────────────
-void fetchWeather() {
-    // HTTPS, like the market fetch. Over plain http:// the API answers with a
-    // redirect to https, and HTTPClient does not follow redirects by default,
-    // so GET() returned 301 and the header silently stayed blank.
-    char url[256];
-    snprintf(url, sizeof(url),
-        "https://api.open-meteo.com/v1/forecast"
-        "?latitude=%.4f&longitude=%.4f"
-        "&current=temperature_2m,weather_code",
-        WEATHER_LAT, WEATHER_LON);
+// Portfolio sums deserve separators: "12,480" reads at a glance, "12480" does not.
+// Precision follows magnitude, because the same formatter prints both a total
+// and a daily move: rounding a -2.34 EUR day change to "-2" throws away the part
+// that tells you what actually happened, while "12,779.04" is just noise.
+void fmtMoney(char* buf, size_t n, double amount) {
+    const bool neg = amount < 0;
+    const double mag = neg ? -amount : amount;
 
-    WiFiClientSecure client;
-    client.setInsecure();
-
-    HTTPClient http;
-    http.begin(client, url);
-    http.setTimeout(6000);
-    http.setConnectTimeout(6000);
-    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-    http.addHeader("Accept", "application/json");
-
-    int httpCode = http.GET();
-    Serial.printf("[wx]   HTTP %d\n", httpCode);
-
-    if (httpCode == HTTP_CODE_OK) {
-        JsonDocument doc;
-        DeserializationError err = deserializeJson(doc, http.getString());
-        if (err) {
-            Serial.printf("[wx]   json error: %s\n", err.c_str());
-        } else {
-            // Only commit if the fields are actually present — otherwise a
-            // malformed-but-valid body would show a confident "0.0C  Clear".
-            JsonVariant cur = doc["current"];
-            if (cur["temperature_2m"].is<float>() && cur["weather_code"].is<int>()) {
-                tempC  = cur["temperature_2m"].as<float>();
-                wxCode = cur["weather_code"].as<int>();
-                Serial.printf("[wx]   %.1fC  code=%d  %s\n", tempC, wxCode, wmoDesc(wxCode));
-            } else {
-                Serial.printf("[wx]   body missing current.temperature_2m / weather_code\n");
-            }
-        }
+    if (mag < 100.0) {
+        snprintf(buf, n, "%s%.2f", neg ? "-" : "", mag);
+        return;
     }
-    http.end();
-    wxFetched = true;
+
+    long v = lround(mag);
+    char tmp[24];
+    if      (v >= 1000000) snprintf(tmp, sizeof(tmp), "%ld,%03ld,%03ld", v / 1000000, (v / 1000) % 1000, v % 1000);
+    else if (v >= 1000)    snprintf(tmp, sizeof(tmp), "%ld,%03ld", v / 1000, v % 1000);
+    else                   snprintf(tmp, sizeof(tmp), "%ld", v);
+    snprintf(buf, n, "%s%s", neg ? "-" : "", tmp);
 }
 
-// Yahoo Finance v8/chart — one HTTPS request per symbol.
-// Called once per pass by marketsFetchNext(); a whole cycle is spread across
-// MARKET_COUNT passes so nothing here ever blocks loop() for more than one request.
-static void fetchOne(int i) {
-    char url[128];
+// A percentage no screen should ever have to render in full. The guards are not
+// theoretical: a quantity typed with one too many zeros makes prevValue tiny and
+// the ratio astronomical.
+void fmtPct(char* buf, size_t n, double pct, int decimals) {
+    if (!(pct == pct))            { snprintf(buf, n, "--");      return; }   // NaN
+    if (pct >  9999.0)            { snprintf(buf, n, ">9999%%"); return; }
+    if (pct < -9999.0)            { snprintf(buf, n, "<-9999%%");return; }
+    snprintf(buf, n, "%+.*f%%", decimals, pct);
+}
+
+void fmtSevenSeg(char* buf, size_t n, const char* src) {
+    if (!buf || n == 0) return;
+    size_t w = 0;
+    if (!src) { buf[0] = '\0'; return; }
+
+    for (const char* c = src; *c && w + 1 < n; c++) {
+        char out = 0;
+        if ((*c >= '0' && *c <= '9') || *c == '-' || *c == '.' || *c == ':' || *c == ' ')
+            out = *c;
+        else if (*c == ',')                      // thousands separator it can draw
+            out = ' ';
+        else
+            continue;                            // '+', '%', letters: it would blank them anyway
+        buf[w++] = out;
+    }
+    buf[w] = '\0';
+
+    // A lone "-" or an empty result says less than nothing on a 48px face.
+    if (w == 0 || (w == 1 && buf[0] == '-')) snprintf(buf, n, "--");
+}
+
+// ── Quote fetch ───────────────────────────────────────────────────────────────
+struct Quote {
+    float price;
+    float prev;
+    uint32_t time;
+    char  currency[8];
+    bool  ok;
+    int   httpCode;
+};
+
+static Quote fetchQuote(const char* symbol) {
+    Quote q = {};
+    char url[160];
     snprintf(url, sizeof(url),
         "https://query2.finance.yahoo.com/v8/finance/chart/%s?interval=1d&range=1d",
-        markets[i].symbol);
+        symbol);
 
     WiFiClientSecure client;
+    // Deliberate, not an oversight. Verifying the chain would mean pinning a
+    // root CA that expires, turning a certificate rotation into a device that
+    // silently stops updating. What crosses this connection is a public share
+    // price and no credentials at all, so the worst a successful intercept buys
+    // is a wrong number on a desk display.
     client.setInsecure();
 
     HTTPClient http;
@@ -191,54 +247,88 @@ static void fetchOne(int i) {
     http.addHeader("User-Agent", "Mozilla/5.0 (compatible)");
     http.addHeader("Accept",     "application/json");
 
-    markets[i].fetched = true;
-    bool got = false;
+    const int httpCode = http.GET();
+    q.httpCode = httpCode;
+    Serial.printf("[fetch] %-14s HTTP %d\n", symbol, httpCode);
 
-    int httpCode = http.GET();
-    Serial.printf("[fetch] %-12s  HTTP %d\n", markets[i].symbol, httpCode);
     if (httpCode == HTTP_CODE_OK) {
         JsonDocument filter;
         filter["chart"]["result"][0]["meta"]["regularMarketPrice"]         = true;
         filter["chart"]["result"][0]["meta"]["chartPreviousClose"]         = true;
         filter["chart"]["result"][0]["meta"]["previousClose"]              = true;
         filter["chart"]["result"][0]["meta"]["regularMarketPreviousClose"] = true;
+        filter["chart"]["result"][0]["meta"]["currency"]                   = true;
+        filter["chart"]["result"][0]["meta"]["regularMarketTime"]           = true;
 
         JsonDocument doc;
         if (!deserializeJson(doc, *http.getStreamPtr(),
                              DeserializationOption::Filter(filter))) {
             JsonVariant meta = doc["chart"]["result"][0]["meta"];
-            float price = meta["regularMarketPrice"].as<float>();
+            const float price = meta["regularMarketPrice"].as<float>();
             float prev  = meta["chartPreviousClose"].as<float>();
             if (prev <= 0) prev = meta["previousClose"].as<float>();
             if (prev <= 0) prev = meta["regularMarketPreviousClose"].as<float>();
-            Serial.printf("           price=%.4f  prev=%.4f\n", price, prev);
+            const char* cur = meta["currency"].as<const char*>();
+            q.time = meta["regularMarketTime"].as<uint32_t>();
+            Serial.printf("          price=%.4f prev=%.4f %s\n", price, prev, cur ? cur : "?");
             if (price > 0) {
-                markets[i].price     = price;
-                markets[i].prevClose = prev;
-                markets[i].changePct = (prev > 0) ? (price - prev) / prev * 100.0f : 0.0f;
-                markets[i].ok        = true;
-                got = true;
+                q.price = price;
+                q.prev  = prev;
+                if (cur) strncpy(q.currency, cur, sizeof(q.currency) - 1);
+                q.ok = true;
             }
         }
     }
     http.end();
+    return q;
+}
 
+static void fetchPosition(int i) {
+    Position& p = positions[i];
+    const Quote q = fetchQuote(p.symbol);
+
+    p.fetched  = true;
+    p.lastHttp = q.httpCode;
+    if (q.ok) {
+        p.price     = q.price;
+        p.prevClose = q.prev;
+        p.ok        = true;
+        p.quoteTime = q.time;
+        if (q.currency[0]) strncpy(p.currency, q.currency, CURRENCY_MAX - 1);
+    }
     // A failed request keeps the last good price and only marks it stale, so one
-    // 429 no longer wipes the grid to "Offline".
-    markets[i].stale = !got;
-    if (!got) Serial.printf("           keeping last value (stale)\n");
+    // rate-limited response no longer wipes a panel of what it already knew.
+    p.stale = !q.ok;
+    if (!q.ok && !p.ok)
+        Serial.printf("[pf]    %-14s no price (HTTP %d) - check the symbol\n", p.symbol, q.httpCode);
 }
 
 // ── Cycle driver ──────────────────────────────────────────────────────────────
-static int s_cycleIdx = -1;   // -1 = idle
+static int      s_cycleIdx  = -1;
+static uint32_t s_cycleDone = 0;
+static uint32_t s_lastEndMs = 0;
 
-void marketsStartCycle() { s_cycleIdx = 0; }
+void marketsStartCycle() { if (positionCount > 0) s_cycleIdx = 0; }
 bool marketsCycleActive() { return s_cycleIdx >= 0; }
+
+int      marketsCycleIndex()      { return s_cycleIdx; }
+int      marketsCycleLength()     { return positionCount; }
+uint32_t marketsCyclesCompleted() { return s_cycleDone; }
+uint32_t marketsLastCycleEndMs()  { return s_lastEndMs; }
 
 int marketsFetchNext() {
     if (s_cycleIdx < 0) return -1;
+    if (s_cycleIdx >= positionCount) { s_cycleIdx = -1; return -1; }
+
     const int i = s_cycleIdx;
-    fetchOne(i);
-    if (++s_cycleIdx >= MARKET_COUNT) s_cycleIdx = -1;
+    fetchPosition(i);
+
+    if (++s_cycleIdx >= positionCount) {
+        s_cycleIdx  = -1;
+        s_cycleDone++;
+        s_lastEndMs = millis();
+        Serial.printf("[cyc]   cycle %lu complete (%d position(s))\n",
+                      (unsigned long)s_cycleDone, positionCount);
+    }
     return i;
 }

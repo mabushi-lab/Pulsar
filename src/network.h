@@ -14,8 +14,28 @@ void wifiMaintain(uint32_t now);              // non-blocking reconnect, call ea
 // ── Time ──────────────────────────────────────────────────────────────────────
 // SNTP + POSIX TZ, so CET/CEST switches without anyone editing a constant.
 void timeBegin();
-bool timeSynced();
 bool localNow(struct tm* out);                // false until the first sync lands
+
+// ── OTA ───────────────────────────────────────────────────────────────────────
+// Firmware over Wi-Fi, so a change no longer means finding the USB-C cable.
+// Push with:  pio run -t upload --upload-port pulsar.local
+// Set OTA_PASSWORD in secrets.h: without one, anyone on the network can replace
+// the firmware on this device, and the device will say so on its own web page.
+void otaBegin();
+void otaHandle();        // call every loop; returns at once when nothing is happening
+bool otaInProgress();
+
+// ── Watchdog ──────────────────────────────────────────────────────────────────
+// The device makes blocking HTTPS calls, and a TLS handshake against an
+// unresponsive host can hang past any timeout the client sets. Without this the
+// result is a frozen screen that still looks powered; with it, the device
+// reboots and the boot counter on the web page shows it happened.
+void watchdogBegin();
+void watchdogFeed();
 
 // ── Web ───────────────────────────────────────────────────────────────────────
 void setupServer();
+
+// "pulsar.local" plus the dotted IP, for the boot screen and the web page.
+const char* deviceAddress();
+const char* deviceHostname();
