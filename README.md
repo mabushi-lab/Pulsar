@@ -1,6 +1,6 @@
 # Pulsar
 
-A real-time market dashboard for the **LilyGo T-Display-S3** (ESP32-S3, 320×170 ST7789 display). Shows 6 EU-listed ETFs and commodity ETCs with live prices, plus a Pomodoro timer, weather, and a Wi-Fi refresh endpoint.
+A portfolio dashboard for the **LilyGo T-Display-S3** (ESP32-S3, 320x170 ST7789). It tracks your own positions with live public quotes, converts everything into one currency, and keeps a daily record of what the portfolio is worth.
 
 ## Hardware
 
@@ -8,78 +8,161 @@ A real-time market dashboard for the **LilyGo T-Display-S3** (ESP32-S3, 320×170
 |---|---|
 | Board | LilyGo T-Display-S3 |
 | MCU | ESP32-S3 |
-| Display | 320×170 ST7789, 8-bit parallel bus |
+| Display | 320x170 ST7789, 8-bit parallel bus |
 | Library | LovyanGFX 1.1.x |
 
-## Features
+## What it shows
 
-- **6-market grid** — 2×3 layout with live price and change %
-- **Single-instrument view** — long-press BOOT to toggle a full-screen silver view with large Font7 price
-- **Brightness cycling** — short-press BOOT to step through 3 levels (full → dim → off)
-- **Session progress bar** — follows whichever instrument is on screen: the shared Euronext day in the grid, and the single instrument's own session (named in the footer) in the large view
-- **Pomodoro timer** — full-screen 25-min work / 5-min break mode, entered with the USER button
-- **Weather** — current temperature and WMO condition from Open-Meteo (no API key required), shown at the right of the header; a failed fetch shows a muted `wx --` instead of going blank
-- **Automatic DST** — the clock uses a POSIX timezone rule, so CET/CEST switches without editing anything
-- **Web refresh** — HTTP endpoint at `http://<device-ip>/` with a one-click refresh button
-- **Adaptive refresh** — 15 s during continuous trading, 1 min pre/post, 15 min when closed — so the device is not hammering Yahoo overnight
-- **Non-blocking fetches** — one symbol per pass, so the clock, buttons and web server stay responsive while prices update
-- **Stale-value retention** — a failed request keeps the last good price, dimmed with a small dot, instead of blanking the panel to `Offline`
-- **Flash animation** — panels flash blue on price update
+Five screens at four stops on the **BOOT** long-press cycle:
 
-## Markets
+- **Positions** - your holdings in a 2x3 grid with live price and day change, paged if you hold more than six
+- **Detail** - one position full-screen: price, day change, units and total return. The day figure says **last close** when that instrument's own venue is shut, which is not the same question as whether the portfolio's is
+- **Portfolio** - **total return** as the headline figure, with the day's move beneath it as context; total value sits in the corner. Amounts can be hidden if the screen is somewhere public. When every venue you hold is shut, the day figure says **last close** rather than **today**
+- **Loan** - for money that was borrowed to invest: what has been drawn, what it has cost in interest, what it bought is worth, and **net equity** as the headline
+- **Allocation** - *reached with USER from the Loan screen* - each targeted fund as a bar against its target, drift in percentage points, and the amount that would close the worst gap
 
-All 6 instruments are listed on Xetra or Euronext Amsterdam so they share the same trading hours (09:00–17:30 local exchange time).
+Allocation and Loan share a stop on the cycle because they describe the same thing from two sides - the borrowed, targeted sleeve of funds. One says what it owes, the other whether it is balanced. USER flips between them.
 
-> **On silver:** `PHAG.AS` is a WisdomTree Physical Silver **ETC listed on Euronext Amsterdam** — not spot silver. Spot silver trades nearly around the clock, but this ETC does not: it stops at 17:30 like everything else in the grid, and its price is frozen outside those hours. The session bar under the large silver view therefore shows Euronext hours, labelled `EURONEXT` so it cannot be misread as a claim about the metal itself.
+The header carries the clock, the date, the link state and your **portfolio day change**, so the number you most want is on screen in every view. The footer is a trading-session bar for whichever venue is relevant, with a live time cursor and time-to-next-phase.
 
-| Label | Ticker | Instrument | Exchange | TER |
-|---|---|---|---|---|
-| S&P 500 | SXR8.DE | iShares Core S&P 500 UCITS ETF | Xetra | 0.07% |
-| STOXX 50 | EXW1.DE | iShares Core Euro Stoxx 50 UCITS ETF | Xetra | 0.10% |
-| Emrg Mkt | EMIM.AS | iShares Core MSCI EM IMI UCITS ETF | Euronext AMS | 0.18% |
-| All World | VWCE.DE | Vanguard FTSE All-World UCITS ETF | Xetra | 0.22% |
-| Gold | EXS1.DE | iShares Physical Gold ETC | Xetra | 0.12% |
-| Silver | PHAG.AS | WisdomTree Physical Silver ETC | Euronext AMS | — |
+## Loan-funded investing
 
-Prices are fetched from Yahoo Finance (`query2.finance.yahoo.com/v8/finance/chart`). Forex crosses (`=X` symbols) are not supported — Yahoo returns HTTP 401 for those from non-browser clients.
+Part of this portfolio can be bought with borrowed money - a loan drawn in equal tranches at a fixed interval, charged a fixed annual rate that capitalises onto the balance. A portfolio screen that ignores that flatters the position by exactly the amount owed, and the gap widens every month.
 
-> **Rate limiting:** a refresh cycle is 6 requests. During continuous trading that is ~24 requests/min, which Yahoo may answer with 429. A rate-limited panel keeps its last price, dimmed with a small dot, rather than going blank — so a brief throttle is visible but not destructive. Raise `MKT_REFRESH_OPEN_MS` in `src/config.h` if you see it persistently.
+The loan view answers three things: **how much has been drawn**, **what it has cost so far in interest**, and **what the investments it bought are worth**. The headline figure is neither of the first two - it is **net equity**, value minus what it would cost to repay today, because that is what would actually be left on liquidation.
 
-## Trading Sessions
+Underneath sits the **spread**: the return the money achieved against the rate it costs to borrow. That is the number that says whether the leverage is doing its job, and it is the one that turns negative first.
 
-A session is data, not hardcoded hours (`src/config.h`, `src/data.h`). Two are defined:
+The return is a money-weighted rate solved against the *same drawdown schedule* the interest is charged on, so the two figures are directly comparable - comparing a simple total return against a compounding loan rate would flatter whichever side had its money in longest. It assumes each tranche was invested when it was drawn.
 
-| Session | Hours (CET/CEST) | Used by |
+Configure it under **Loan** in Settings: first drawdown date, amount, interval, total number of drawdowns, rate, and which symbols the loan funded. Anything left out of that symbol list is treated as your own money and stays out of every loan figure.
+
+**The first drawdown date ships empty and the view stays inert until you set it.** There is no sane default for it - everything accrues from that date - and a guessed date would report wrong money without ever looking wrong.
+
+## Positions and watchlist
+
+One list, one editor, at `http://pulsar.local/`:
+
+```
+SXR8.DE,12.5,540.20,S&P 500,50
+PPFD.SG,62.388935,51.59,Silver
+AAPL,0,0,Apple
+```
+
+`SYMBOL,QUANTITY,AVG COST` with an optional short label and an optional **target allocation** in percent. **A quantity of 0 makes it a watchlist entry** - priced and displayed like any other, but excluded from every total.
+
+Use the Yahoo Finance symbol for the listing you actually bought. Positions live in NVS flash, so a trade means editing a form, not reflashing.
+
+> **Use a dot for decimals.** The comma separates fields, so `51,59` is rejected with an explanation rather than silently read as `51`. A purely numeric label is rejected for the same reason.
+
+### Currency, and what the return figure actually means
+
+Everything is converted into the base currency with ECB reference rates, so a mixed EUR/USD portfolio totals correctly rather than adding numbers that are not comparable. Conversion goes through the rate table's own base, which is taken from the provider's response rather than assumed, so it stays correct even if the provider ignores the requested base.
+
+One property worth understanding rather than discovering. Average cost is entered in the instrument's own currency, and the cost basis is converted at **today's** rate - the device is never told what the rate was on the day you bought. Both legs of the return therefore carry the same rate and it cancels, which means **the reported return for a foreign holding is that asset's return in its own currency, not your return in euros including the currency move.**
+
+For a fund bought at $200 and now worth $250, the device says +25% whatever the dollar has done since. If the dollar fell 8% against the euro over that period, your actual euro return was nearer +15%. The device is not wrong, it is answering "how has this asset done" rather than "how much money have I made", and it cannot answer the second without your purchase-date exchange rates.
+
+This makes no difference to a single-currency portfolio, where the two questions have the same answer.
+
+### Prices you can trust
+
+Two checks guard against confidently wrong figures rather than merely missing ones:
+
+- **Implausible moves.** A one-day move past 25% is flagged as a probable split or other corporate action. A 4:1 split drops the price by 75% while your quantity should have quadrupled; a tracker that is not told reports a catastrophic loss with total confidence. Broad funds do not move 25% in a day, so when the number says they did, the number is wrong. This warning outranks everything else on the portfolio screen.
+- **Quotes from different sessions.** Each price carries the venue's own timestamp. When the prices being summed are more than 36 hours apart, they are not all from the same session and the day change is blending more than one day - usually a venue holiday, or a symbol that has stopped trading. The dashboard says so instead of adding them up quietly.
+
+### Why there is no broker integration
+
+**Trade Republic has no public API.** No developer portal, no OAuth, no read-only tokens - every library you will find ([pytr](https://github.com/nborrmann/pytr), [TradeRepublicApi](https://github.com/Zarathustra2/TradeRepublicApi)) is an unofficial client for the private mobile-app API. They need your phone number, PIN and 2FA, and pytr's setup performs a device reset that logs you out of your phone. That does not belong in flash on a desk gadget, and it breaks whenever the app changes.
+
+So this is a local model instead: you own the position data, the device fetches only public prices, and no credentials exist anywhere in the project. The cost is that you update it by hand after a trade.
+
+## Web app
+
+The device advertises itself over mDNS, so **you do not need its IP**:
+
+```
+http://pulsar.local/
+```
+
+The address is also shown on screen for a few seconds at boot and printed to the serial monitor.
+
+| Page | Contents |
+|---|---|
+| `/` | Totals, allocation, fetch diagnostics, per-position status, positions editor |
+| `/settings` | Everything below, applied live |
+
+Set `WEB_PASSWORD` in `include/secrets.h` to put the whole web app behind a password (username `pulsar`, or set `WEB_USER`). It is off by default: a prompt nobody asked for is a bad default for a device on your own desk. It guards reads as well as writes on purpose — guarding only the writes would leave the dashboard's Refresh button silently returning 401 from a page the browser was never challenged on.
+
+**Settings**: orientation, brightness, night dimming, default view, amount visibility, base currency, timezone, exchange-rate URL, the three refresh intervals, the loan schedule, plus reset-to-defaults and clear-history.
+
+**Night dimming** drops the backlight between two wall-clock times — 23:00 to 07:00 by default. The window is local time, so it follows the same timezone rule as the clock through daylight saving, and a window that runs past midnight is the normal case rather than an edge one. A BOOT press still overrides the level by hand; the schedule only takes over again at the next dusk or dawn, so a deliberate choice is not undone a second later.
+
+**Amount visibility** has three modes. *Always* (the default) puts today's move in money on screen with the percentage beside it — a percentage alone hides magnitude, and 1% of a small position reads identically to 1% of a large one. *Reveal on press* keeps percentages on screen and shows money for six seconds after a USER tap. *Never* keeps amounts off the device entirely. The middle and last modes exist because a desk display is readable by anyone walking past. Orientation and brightness repaint immediately; a timezone change re-applies the rule on the spot; a base-currency change refetches rates.
+
+Every field is validated - the first bad value aborts the save so nothing is left half-applied, and an out-of-range stored value is repaired on load rather than trusted.
+
+### The seven-segment face
+
+The large figures are drawn in LovyanGFX's `Font7`, which contains exactly the digits, `-`, `.`, `:` and space. Its own header says *"All other characters print as a space"* - so a hero built with the ordinary formatters loses its `+`, its thousands separator and its `%` somewhere between the number and the glass, and the resulting blanks push a centred string off centre. `fmtSevenSeg()` maps a figure into the alphabet the font actually has instead of letting the font edit it: a separator becomes a space, which is a real thousands separator across most of Europe and one it can draw; a leading `+` is dropped so positives stay centred; the `-` survives, because that glyph exists.
+
+## Buttons
+
+| Press | Action |
+|---|---|
+| BOOT, short | Cycle brightness (full / dim / off), overriding the night schedule until it next changes |
+| BOOT, long | Next view |
+| USER, short | "Next" in the current view: next page, next position, reveal amounts, or flip between Loan and Allocation |
+| USER, long | Refresh now |
+
+## How it fetches
+
+A **watchdog** reboots the device if a loop pass stalls for 45 seconds - long enough that no legitimate request trips it, short enough that a hung TLS handshake becomes a restart rather than a frozen screen that still looks powered. The boot counter on the web page is how you notice it happened.
+
+A refresh **cycle** makes one HTTPS request per position, one per `loop()` pass, so the clock, buttons and web server stay responsive throughout - rather than freezing for the length of the whole burst.
+
+Polling follows the trading session of the most active position: fast during continuous trading, slower pre/post, slowest when everything is shut. A position's session is inferred from its venue suffix (`.DE`, `.AS`, `.SG` and friends are European, a bare ticker is US, `=F` is a future); a wrong guess only affects the footer label and the polling rate, never a price.
+
+A failed request **keeps the last good price**, dimmed with a dot, rather than blanking the panel. `no price` means that symbol has never fetched successfully.
+
+Quotes are fetched over TLS without certificate verification. That is deliberate: pinning a root CA turns a routine certificate rotation into a device that silently stops updating, and what crosses the connection is a public share price with no credentials attached. The worst a successful intercept buys is a wrong number on a desk display.
+
+Symbols are checked before they are saved - letters, digits, `.`, `-`, `^` and `=` only. They go straight into the quote URL, so a stray `?` or `&` would rewrite the request's query string and surface only as a puzzling HTTP error against a symbol that looks fine on screen.
+
+### Venues
+
+A position's trading session comes from its venue suffix, and the hours are the venue's real ones rather than one European default:
+
+| Suffix | Session | Hours (local) |
 |---|---|---|
-| `SESSION_EQUITY` | 07:00 pre · 09:00–17:30 continuous · 20:00 post-close, weekdays — 42.5 h/week | all 6 instruments |
-| `SESSION_METALS` | Sun 23:00 → Fri 22:00, daily break 22:00–23:00 — 115 h/week | none by default |
+| `.DE` | Xetra | 09:00-17:30 |
+| `.SG` `.F` `.BE` `.MU` `.DU` `.HM` | German regional | 08:00-22:00 |
+| `.AS` `.PA` `.BR` `.LS` | Euronext | 09:00-17:30 |
+| `.L` | LSE | 09:00-17:30 CET |
+| other European | Europe | 09:00-17:30 |
+| bare ticker | US | 15:30-22:00 CET |
+| `=F` | COMEX | near-24/5 |
 
-The footer bar is rendered by sweeping `phaseAtMinute()` across the day, so the bar, the phase label and the polling rate can never disagree, and a near-24h session with a maintenance break draws correctly without special-casing.
+This is not cosmetic. The silver ETC trades on Stuttgart until 22:00; treating it as a Xetra listing dropped it to 15-minute polling from 17:30 and named the wrong venue in the footer.
 
-`SESSION_METALS` is defined and tested but deliberately unused. Pointing an instrument at it is only correct if you *also* change its symbol to something that genuinely trades around the clock (COMEX `SI=F`, say) — otherwise the bar will claim `OPEN` while the price sits frozen. Note the project's symbols are all cash-market instruments; Yahoo returns HTTP 401 for `=X` forex crosses from non-browser clients, and `=F` futures symbols have not been verified on-device.
+### Flash
 
-Polling follows the fastest session in play (`marketsRefreshMs()`), so adding a 24/5 instrument automatically keeps the refresh rate up overnight.
+History lives in NVS, and NVS is flash. A cycle completes every 15 seconds while a market is open and each one has a snapshot for today, so persisting every one would rewrite the whole blob about 2,000 times a day - enough to wear the partition out inside a year. The point in RAM is updated every time; the write is throttled to once every ten minutes and forced whenever a new day is appended or the device is about to reboot for an update. The web app reports the write count for the current boot.
 
-## Button Controls
+### Allocation and drift
 
-**Market view**
+Every column of the allocation table shares one denominator - the targeted sleeve - because showing share-of-everything beside a target defined over the funds alone put three mutually contradictory numbers on one line.
 
-| Press | Action |
-|---|---|
-| BOOT, short (< 600 ms) | Cycle display brightness |
-| BOOT, long (≥ 600 ms) | Toggle 6-market grid ↔ silver single view |
-| USER, short (< 700 ms) | Enter the Pomodoro timer |
-| USER, long (≥ 700 ms) | Manual market refresh |
+Drift is measured **within the targeted sleeve**, not against the whole portfolio. A position with no target - physical silver here - is separate money and does not dilute an allocation defined over the funds that name it. Measuring against the whole book instead made every targeted fund read permanently short by exactly the untargeted share, and the rebalance hint named the same fund forever regardless of what was held.
 
-**Pomodoro view**
+Targets are renormalised by their own sum, so a list adding to 95 or 105 still compares sanely instead of showing a constant offset on every row.
 
-| Press | Action |
-|---|---|
-| USER, short (< 700 ms) | Start / pause / resume the timer |
-| USER, long (≥ 700 ms) | Exit back to the market view |
-| BOOT, short (< 600 ms) | Cycle display brightness |
+The bottom line gives the amount that would bring the worst-drifted fund back to target, in the base currency when amounts are visible. The web app lists that amount per fund.
 
-A completed work phase auto-starts the 5-minute break; the break ends paused so you choose when the next session begins. Market data is not refreshed while the Pomodoro view is open.
+### Catching a bad setup
+
+The dashboard warns, in place rather than in a diagnostics table, when a symbol in the loan list matches no position. A typo there silently drops a holding from every loan figure while the screen goes on looking entirely healthy - which is this device's worst failure mode and the one it has produced most often. It also flags targets that add up far from 100.
 
 ## Setup
 
@@ -87,84 +170,100 @@ A completed work phase auto-starts the 5-minute break; the break ends paused so 
 
 ```bash
 pip install platformio
-# or use the PlatformIO IDE extension in VS Code
 ```
 
-### 2. Configure secrets
-
-Copy the template and fill in your values:
+### 2. Wi-Fi credentials
 
 ```bash
 cp include/secrets.h.example include/secrets.h
 ```
-
-Edit `include/secrets.h`:
 
 ```cpp
 #define WIFI_SSID       "YourNetwork"
 #define WIFI_PASSWORD   "YourPassword"
 ```
 
-> `secrets.h` is gitignored and will never be committed.
+Set `OTA_PASSWORD` in the same file if you want authenticated over-the-air updates — see below.
 
-There is no UTC offset to set. The clock uses the POSIX timezone rule `TZ_INFO` in `src/config.h` (`CET-1CEST,M3.5.0,M10.5.0/3` for Belgium/Luxembourg), so summer time switches itself. Change that string for another region.
+`secrets.h` is gitignored. There is no UTC offset to set: the clock uses the POSIX timezone rule in Settings, so summer time switches itself.
 
-### 3. Set your location
-
-Edit `src/config.h` and update the coordinates to your city (and `TZ_INFO` if you are outside Central European Time):
-
-```cpp
-const float WEATHER_LAT = 50.8798f;  // latitude
-const float WEATHER_LON =  4.7005f;  // longitude
-```
-
-Find your coordinates at [latlong.net](https://www.latlong.net).
-
-### 4. Build and flash
+### 3. Build and flash
 
 ```bash
 pio run -t upload
 pio device monitor
 ```
 
-The board must be in bootloader mode for the first flash: hold **BOOT**, press **RST**, then release **BOOT** before running the upload command.
+Hold **BOOT**, press **RST**, release **BOOT** before the first upload.
 
-## Project Structure
+### 4. Updating over Wi-Fi
+
+After the first USB flash the device listens for firmware pushes, so the cable is only needed once:
+
+```bash
+pio run -t upload --upload-port pulsar.local --upload-flags --auth=YourOtaPassword
+```
+
+`platformio.ini` has commented lines that make this the default. The screen shows a progress bar during the transfer, and an error with a code if it fails — a device mid-update should never just look dead.
+
+**Set `OTA_PASSWORD` in `include/secrets.h`.** Without it the update endpoint still works but accepts anyone on the network, which means anyone on the network can replace this firmware entirely. The device's own web page says so, under *Firmware update*, until you set one.
+
+## Troubleshooting
+
+Everything logs to the serial monitor at 115200:
+
+```
+[cfg]   rot=0 bri=255 view=0 base=EUR tz=CET-1CEST,M3.5.0,M10.5.0/3
+[pf]    loaded 3 position(s), 2 held
+[fx]    4 rate(s), base EUR, dated 2026-09-18
+[fetch] SXR8.DE        HTTP 200
+          price=592.4400 prev=589.1200 EUR
+[cyc]   cycle 1 complete (3 position(s))
+[hist]  day 2452 recorded: value=12480.22 cost=10900.00 (37 stored)
+[ota]   ready: pio run -t upload --upload-port pulsar.local
+```
+
+The **Fetching** section of the web app shows the same state without a serial cable: whether a cycle is running and where, cycles completed, time since the last one, the current interval, FX rate state, history depth and flash writes, OTA status, free heap, uptime and **boot count**.
+
+- **Free heap falling steadily** over days points at fragmentation from the per-request TLS buffers, which ends with every fetch failing at once rather than gradually. The low-water figure beside it is the number that shows the trend; the watchdog and boot counter are what catch it if it gets that far.
+
+- A boot count climbing while uptime stays low means the device is **restarting in a loop** - which looks identical, from the outside, to a device that is merely slow to fetch. That ambiguity is what made an unfetched position hard to diagnose, so the counter is there to settle it.
+
+- `not fetched yet` next to a position, with **cycles completed: 0**, means nothing is fetching at all - check Wi-Fi and uptime.
+- `no price - HTTP 404` means Yahoo does not serve that symbol on that venue. Check it resolves at `finance.yahoo.com/quote/<SYMBOL>`.
+- `HTTP 429` means rate limiting - raise the open-market interval in Settings.
+- `some positions excluded - no FX rate` means the rates table has no entry for a position's currency; check the FX line in the diagnostics.
+- An **OTA push that cannot find the device** usually means mDNS is not resolving; use the IP shown in the diagnostics instead of `pulsar.local`. `Authentication Failed` means `OTA_PASSWORD` and `--auth=` disagree. The OTA listener only starts if Wi-Fi was up at boot, so a device that came up offline needs a restart once it is on the network.
+- **The screen is dark at night and you did not expect it**: night dimming is on by default from 23:00 to 07:00. Turn it off, or move the window, in Settings. A BOOT press brings it back until the next scheduled change.
+
+## Project structure
 
 ```
 src/
-  main.cpp       — setup(), loop(), button handling, Pomodoro state, refresh scheduling
-  config.h       — pins, layout geometry, colours, timezone, refresh intervals, coordinates
-  display.cpp    — LovyanGFX drawing, panel layout, animations
-  display.h
-  data.cpp       — MarketItem array, fetchMarkets(), fetchWeather(), price formatting
+  main.cpp       - setup(), loop(), buttons, refresh and history scheduling
+  config.h       - pins, layout, colours, sessions, defaults
+  portfolio.cpp  - positions, totals, NVS persistence
+  portfolio.h
+  data.cpp       - trading sessions, quote fetching, the refresh cycle
   data.h
-  network.cpp    — Wi-Fi, SNTP + timezone, web server (/ and /refresh endpoints)
+  fx.cpp         - ECB rates, caching, currency conversion
+  fx.h
+  loan.cpp       - drawdown schedule, capitalised interest, net equity
+  loan.h
+  history.cpp    - daily value snapshots (recorded, not displayed)
+  history.h
+  display.cpp    - LovyanGFX drawing, the five screens, night dimming, OTA screen
+  display.h
+  network.cpp    - Wi-Fi, mDNS, SNTP, OTA, web app
   network.h
+  settings.cpp   - runtime settings, validation, NVS
+  settings.h
 include/
-  secrets.h      — Wi-Fi credentials (gitignored)
+  secrets.h      - Wi-Fi credentials, OTA and web passwords (gitignored)
   secrets.h.example
 platformio.ini
 ```
 
-## Troubleshooting
-
-Both fetchers log to the serial monitor (`pio device monitor`, 115200):
-
-```
-[wx]   HTTP 200
-[wx]   18.2C  code=3  Overcast
-[fetch] SXR8.DE      HTTP 200
-           price=592.4400  prev=589.1200
-```
-
-- `wx --` in the header means the weather request failed — the `[wx] HTTP <code>` line says why.
-- A **dimmed price with a small dot** means the last request for that symbol failed and you are looking at the previous value; the log line says why. `Offline` means that symbol has never fetched successfully.
-- `HTTP 429` means Yahoo is rate limiting — raise `MKT_REFRESH_OPEN_MS`.
-- `waiting for time sync` in the footer, or `--:--  syncing` in the header, means SNTP has not replied yet; the market phase and polling rate stay unknown until it does.
-- The footer in the large single-instrument view is prefixed with that instrument's venue (`EURONEXT`), so the timeline is never ambiguous about which market it describes.
-- Both endpoints are HTTPS with certificate verification disabled (`setInsecure()`), which is why no CA bundle is needed.
-
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT - see [LICENSE](LICENSE).
