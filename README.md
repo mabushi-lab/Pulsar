@@ -201,10 +201,20 @@ Hold **BOOT**, press **RST**, release **BOOT** before the first upload.
 After the first USB flash the device listens for firmware pushes, so the cable is only needed once:
 
 ```bash
-pio run -t upload --upload-port pulsar.local --upload-flags --auth=YourOtaPassword
+PULSAR_OTA_PASSWORD=yourpassword pio run -e ota -t upload
 ```
 
-`platformio.ini` has commented lines that make this the default. The screen shows a progress bar during the transfer, and an error with a code if it fails — a device mid-update should never just look dead.
+`platformio.ini` carries a separate `ota` environment for this, so USB uploads keep working untouched and nothing needs editing before each push. The password comes from the environment rather than the file, because `platformio.ini` is committed - putting it there would undo the point of keeping it in the gitignored `secrets.h`. It must match `OTA_PASSWORD` in `secrets.h`.
+
+If `pulsar.local` does not resolve, use the IP instead - it is on the boot screen and on the web dashboard:
+
+```bash
+PULSAR_OTA_PASSWORD=yourpassword pio run -e ota -t upload --upload-port 192.168.1.42
+```
+
+The screen shows a progress bar during the transfer and an error with a code if it fails, so a device mid-update never just looks dead. The watchdog is disabled for the duration and today's history point is flushed to flash first, since the device is about to reboot.
+
+The board's partition table carries two 6.25 MB application slots and an `otadata` partition. The new firmware is written into the inactive slot and only becomes active once its hash verifies, so a failed or interrupted push leaves the running firmware untouched - worst case you pull the cable and flash over USB.
 
 **Set `OTA_PASSWORD` in `include/secrets.h`.** Without it the update endpoint still works but accepts anyone on the network, which means anyone on the network can replace this firmware entirely. The device's own web page says so, under *Firmware update*, until you set one.
 
