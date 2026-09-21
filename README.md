@@ -17,7 +17,7 @@ Five screens at four stops on the **BOOT** long-press cycle:
 
 - **Positions** - your holdings in a 2x3 grid with live price and day change, paged if you hold more than six
 - **Detail** - one position full-screen: price, day change, units and total return. The day figure says **last close** when that instrument's own venue is shut, which is not the same question as whether the portfolio's is
-- **Portfolio** - **total return** as the headline figure, with the day's move beneath it as context; total value sits in the corner. Amounts can be hidden if the screen is somewhere public. When every venue you hold is shut, the day figure says **last close** rather than **today**
+- **Portfolio** - **total return** as the headline figure, with the day's move beneath it as context; total value sits in the corner. Amounts can be hidden if the screen is somewhere public. When every venue you hold is shut, the day figure says **last close** rather than **today**. A 7- and 30-day return sits below that, once daily history actually reaches back that far - see [Value history](#value-history) below
 - **Loan** - for money that was borrowed to invest: what has been drawn, what it has cost in interest, what it bought is worth, and **net equity** as the headline
 - **Allocation** - *reached with USER from the Loan screen* - each targeted fund as a bar against its target, drift in percentage points, and the amount that would close the worst gap
 
@@ -95,7 +95,7 @@ The address is also shown on screen for a few seconds at boot and printed to the
 
 Set `WEB_PASSWORD` in `include/secrets.h` to put the whole web app behind a password (username `pulsar`, or set `WEB_USER`). It is off by default: a prompt nobody asked for is a bad default for a device on your own desk. It guards reads as well as writes on purpose — guarding only the writes would leave the dashboard's Refresh button silently returning 401 from a page the browser was never challenged on.
 
-**Settings**: orientation, brightness, night dimming, default view, amount visibility, base currency, timezone, exchange-rate URL, the three refresh intervals, the loan schedule, plus reset-to-defaults and clear-history.
+**Settings**: orientation, brightness, night dimming, default view, amount visibility, base currency, timezone, exchange-rate URL, the three refresh intervals, the loan schedule, an optional alert webhook, plus reset-to-defaults and clear-history.
 
 **Night dimming** drops the backlight between two wall-clock times — 23:00 to 07:00 by default. The window is local time, so it follows the same timezone rule as the clock through daylight saving, and a window that runs past midnight is the normal case rather than an edge one. A BOOT press still overrides the level by hand; the schedule only takes over again at the next dusk or dawn, so a deliberate choice is not undone a second later.
 
@@ -150,6 +150,10 @@ This is not cosmetic. The silver ETC trades on Stuttgart until 22:00; treating i
 
 History lives in NVS, and NVS is flash. A cycle completes every 15 seconds while a market is open and each one has a snapshot for today, so persisting every one would rewrite the whole blob about 2,000 times a day - enough to wear the partition out inside a year. The point in RAM is updated every time; the write is throttled to once every ten minutes and forced whenever a new day is appended or the device is about to reboot for an update. The web app reports the write count for the current boot.
 
+### Value history
+
+One value-and-cost snapshot is recorded per calendar day, which is what the Portfolio screen's 7- and 30-day return is drawn from. It looks up the closest recorded day *at or before* the target date rather than an exact match, because a device that was off for a stretch has ordinary gaps in the series - but a gap wider than the window itself is declined rather than mislabelled: a 7-day figure is never quietly answered with a point that is actually three weeks old. Until the series reaches back that far, the line simply does not appear.
+
 ### Allocation and drift
 
 Every column of the allocation table shares one denominator - the targeted sleeve - because showing share-of-everything beside a target defined over the funds alone put three mutually contradictory numbers on one line.
@@ -165,6 +169,12 @@ The device screen only has room to draw six funds; a targeted sleeve larger than
 ### Catching a bad setup
 
 The dashboard warns, in place rather than in a diagnostics table, when a symbol in the loan list matches no position. A typo there silently drops a holding from every loan figure while the screen goes on looking entirely healthy - which is this device's worst failure mode and the one it has produced most often. It also flags targets that add up far from 100.
+
+### Alerts
+
+Optional, and off unless a webhook URL is set under **Alerts** in Settings. When set, the device posts a `{"text": "..."}` body - the shape Slack's incoming webhooks expect, and a form most self-hosted relays accept - the moment one of the conditions above starts or clears: a probable stock split, a loan symbol matching no position, or a fund drifted past the same threshold the Portfolio and Allocation screens already draw in orange. Each fires once at the change, not on every refresh cycle, so an unresolved condition does not turn into a ping every fifteen seconds. A **Send test alert** button next to the field posts a fixed message immediately, so setting the URL up does not mean waiting for a real warning to find out it works.
+
+Nothing quantitative ever goes in a message - no price, no value, no position size - only which condition changed and a fund's own label. The connection is unverified TLS, the same posture as every other outbound request this device makes (see [Why there is no broker integration](#why-there-is-no-broker-integration) and the note on quote fetching below): what it could leak is already visible in full to anyone with LAN access to the web dashboard, which is unauthenticated by default.
 
 ## Setup
 
@@ -262,8 +272,10 @@ src/
   fx.h
   loan.cpp       - drawdown schedule, capitalised interest, net equity
   loan.h
-  history.cpp    - daily value snapshots (recorded, not displayed)
+  history.cpp    - daily value snapshots, the 7/30-day return lookup
   history.h
+  alerts.cpp     - optional webhook alerts on split/loan-typo/drift conditions
+  alerts.h
   display.cpp    - LovyanGFX drawing, the five screens, night dimming, OTA screen
   display.h
   network.cpp    - Wi-Fi, mDNS, SNTP, OTA, web app

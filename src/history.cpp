@@ -23,6 +23,31 @@ static uint16_t historyDayIndex(const struct tm& t) {
     return (uint16_t)days;
 }
 
+// Portfolio value as of the closest recorded day at or before `days` back from
+// `today`. A device that was off for a stretch has ordinary gaps in the
+// series, so this is deliberately not an exact-day lookup - but a gap wider
+// than the window itself would silently answer "7-day return" with a point
+// that is actually three weeks old, which is worse than not answering, so
+// that case is declined rather than mislabelled.
+bool historyValueDaysAgo(const struct tm& today, int days, double* value, double* cost) {
+    if (!value || !cost || days <= 0 || s_count == 0) return false;
+    const uint16_t todayIdx = historyDayIndex(today);
+    if (todayIdx < (uint16_t)days) return false;   // the series can't reach that far back
+    const uint16_t target = (uint16_t)(todayIdx - days);
+
+    int best = -1;
+    for (int i = 0; i < s_count; i++) {
+        if (s_points[i].day > target) break;
+        best = i;
+    }
+    if (best < 0) return false;
+    if ((uint16_t)(target - s_points[best].day) > (uint16_t)days) return false;
+
+    *value = s_points[best].value;
+    *cost  = s_points[best].cost;
+    return true;
+}
+
 static uint32_t s_writes      = 0;
 static uint32_t s_lastSaveMs  = 0;
 static bool     s_dirty       = false;

@@ -3,12 +3,13 @@
 #include <time.h>
 
 // ── Value history ─────────────────────────────────────────────────────────────
-// One snapshot per calendar day, kept in NVS. Nothing reads it back on screen
-// any more - the History chart it fed was replaced by Allocation - but it keeps
-// recording, because a value series is the one thing on this device that cannot
-// be reconstructed honestly after the fact. Reconstructing it was tried, and
-// what it produced was a backtest of today's holdings wearing a chart's
-// clothes. If a real equity curve is ever wanted, the days will be there.
+// One snapshot per calendar day, kept in NVS. The chart this once fed was
+// replaced by Allocation and never came back, but recording never stopped,
+// because a value series is the one thing on this device that cannot be
+// reconstructed honestly after the fact - reconstructing it was tried, and what
+// it produced was a backtest of today's holdings wearing a chart's clothes. The
+// Portfolio screen's 7- and 30-day return (historyValueDaysAgo(), below) is
+// what that patience paid for.
 const int HISTORY_MAX = 120;      // ~4 months; 120 × 10 bytes = 1.2 KB
 
 struct DayPoint {
@@ -42,4 +43,15 @@ uint32_t historyWrites();
 
 int             historyCount();
 void            historyClear();
+
+// Portfolio value and cost basis as of the closest recorded day at least
+// `days` back from `today`. False before the series reaches back that far, or
+// when the closest point on file is itself more than `days` older than the
+// target - a gap that wide would answer a 7-day question with a point that is
+// actually weeks old. The cost basis is not for display - it is what a caller
+// compares against today's to tell a market move from a deposit: a window
+// return computed across a changed cost basis is a change of principal wearing
+// a return's clothes, and would be wrong exactly like the "backtest of today's
+// holdings" the top of this file already declined to build.
+bool historyValueDaysAgo(const struct tm& today, int days, double* value, double* cost);
 

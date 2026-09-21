@@ -5,6 +5,7 @@
 #include "network.h"
 #include "settings.h"
 #include "loan.h"
+#include "history.h"
 #include <LovyanGFX.hpp>
 #include <string.h>
 
@@ -638,7 +639,7 @@ void drawDetail() {
             fmtPct(driftBuf, sizeof(driftBuf), drift, 1);
             snprintf(line, sizeof(line), "%s   %s of %d%%  (%s)",
                      lead, wgtBuf + 1, (int)(p.target + 0.5), driftBuf);
-            lcd.setTextColor(mag >= 2.0 ? 0xFFAA00 : C_LABEL, C_BG);
+            lcd.setTextColor(mag >= DRIFT_WARN_PCT ? 0xFFAA00 : C_LABEL, C_BG);
         } else {
             char retBuf[16];
             fmtPct(retBuf, sizeof(retBuf), ret, 1);
@@ -779,6 +780,40 @@ void drawPortfolio() {
         lcd.drawString(tot, cx, y + 90);
     }
 
+    // A window return, only when the recorded history actually reaches back
+    // that far - historyValueDaysAgo() declines rather than stretch a gap into
+    // an answer, so this stays empty until there is a real week or month of
+    // daily snapshots behind it. Also declines if the cost basis on file that
+    // day differs from today's: a changed quantity or a new position moved the
+    // cost basis, and a value comparison across that gap is a deposit or a
+    // withdrawal wearing a market return's clothes, not the return itself.
+    char win[56] = "";
+    {
+        struct tm tNow;
+        if (localNow(&tNow)) {
+            double v7 = 0, c7 = 0, v30 = 0, c30 = 0;
+            char p7[24] = "", p30[24] = "";
+            // A cent or two of drift is float rounding across the value's trip
+            // through a float in NVS and back; a real deposit or edit moves the
+            // cost basis by whole units of currency, not fractions of one.
+            const double costTol = 1.0;
+            if (historyValueDaysAgo(tNow, 7, &v7, &c7) && v7 > 0 &&
+                (c7 - t.cost < costTol && t.cost - c7 < costTol)) {
+                char b[16];
+                fmtPct(b, sizeof(b), (t.value - v7) / v7 * 100.0, 1);
+                snprintf(p7, sizeof(p7), "7d %s", b);
+            }
+            if (historyValueDaysAgo(tNow, 30, &v30, &c30) && v30 > 0 &&
+                (c30 - t.cost < costTol && t.cost - c30 < costTol)) {
+                char b[16];
+                fmtPct(b, sizeof(b), (t.value - v30) / v30 * 100.0, 1);
+                snprintf(p30, sizeof(p30), "30d %s", b);
+            }
+            if (p7[0] && p30[0]) snprintf(win, sizeof(win), "%s   %s", p7, p30);
+            else                 snprintf(win, sizeof(win), "%s%s", p7, p30);
+        }
+    }
+
     // One status line, in priority order: a wrong total matters more than a
     // stale one, and a stale one matters more than the hint.
     lcd.setFont(&fonts::Font2);
@@ -813,8 +848,11 @@ void drawPortfolio() {
         fmtPct(driftBuf, sizeof(driftBuf), d, 1);
         stripPercent(driftBuf);
         snprintf(msg, sizeof(msg), "%s %s from target", positions[wi].label, driftBuf);
-        lcd.setTextColor(mag >= 2.0 ? 0xFFAA00 : C_MUTED, C_BG);
+        lcd.setTextColor(mag >= DRIFT_WARN_PCT ? 0xFFAA00 : C_MUTED, C_BG);
         lcd.drawString(msg, cx, y + h - 10);
+    } else if (win[0]) {
+        lcd.setTextColor(C_LABEL, C_BG);
+        lcd.drawString(win, cx, y + h - 10);
     } else {
         lcd.setTextColor(C_MUTED, C_BG);
         lcd.drawString(settings.amountMode == 0 ? "amounts hidden"
@@ -924,7 +962,7 @@ void drawAllocation() {
         const double mag    = drift < 0 ? -drift : drift;
 
         const int ry = rowTop + k * rowH + rowH / 2;
-        const uint32_t tone = (mag >= 2.0) ? 0xFFAA00 : C_ACCENT;
+        const uint32_t tone = (mag >= DRIFT_WARN_PCT) ? 0xFFAA00 : C_ACCENT;
 
         lcd.setFont(&fonts::Font2);
         lcd.setTextDatum(lgfx::middle_left);
@@ -952,7 +990,7 @@ void drawAllocation() {
         char dr[16];
         fmtPct(dr, sizeof(dr), drift, 1);
         stripPercent(dr);                                    // points, not percent
-        lcd.setTextColor(mag >= 2.0 ? 0xFFAA00 : C_LABEL, C_BG);
+        lcd.setTextColor(mag >= DRIFT_WARN_PCT ? 0xFFAA00 : C_LABEL, C_BG);
         lcd.drawString(dr, W - 6, ry);
     }
 

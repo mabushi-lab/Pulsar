@@ -9,6 +9,7 @@
 const int TZ_MAX   = 48;
 const int CCY_MAX  = 8;
 const int FXURL_MAX = 96;
+const int WEBHOOK_MAX = 160;   // room for a Slack incoming-webhook URL and then some
 
 struct Settings {
     uint8_t  rotation;        // 0 or 2 — the two landscape orientations
@@ -41,6 +42,12 @@ struct Settings {
     uint32_t refreshOpenMs;
     uint32_t refreshEdgeMs;
     uint32_t refreshClosedMs;
+
+    // Optional. Empty means the feature is off - no scheduled check ever posts
+    // anywhere. Set, it gets a Slack-compatible {"text": "..."} POST when a
+    // split-suspect move, an unmatched loan symbol, or a drift past
+    // DRIFT_WARN_PCT starts or clears. See alerts.h.
+    char webhookUrl[WEBHOOK_MAX];
 };
 
 extern Settings settings;

@@ -7,6 +7,7 @@
 #include "settings.h"
 #include "fx.h"
 #include "history.h"
+#include "alerts.h"
 
 // ── Buttons ───────────────────────────────────────────────────────────────────
 // BOOT  short: brightness            long: next view
@@ -197,6 +198,7 @@ void loop() {
         if (!marketsCycleActive()) {
             lastMarkets = now;         // cycle complete
             maybeRecordHistory();
+            alertsCheck();   // cheap unless a condition just started or cleared
         }
     }
 

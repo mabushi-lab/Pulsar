@@ -156,6 +156,12 @@ const double SPLIT_SUSPECT_PCT = 25.0;
 // into one "day change" blends two different days.
 const uint32_t QUOTE_SKEW_MAX_S = 36UL * 3600UL;
 
+// A targeted fund drifted further than this from its target is drawn in
+// warning orange on both the Portfolio and Allocation screens, and is the
+// same threshold a webhook alert fires on - one number, so the screen and a
+// notification can never disagree about what counts as "off target".
+const double DRIFT_WARN_PCT = 2.0;
+
 // ── Watchdog ──────────────────────────────────────────────────────────────────
 // Long enough that no legitimate blocking call trips it: one quote is an 8 s
 // connect plus an 8 s read on top of a TLS handshake. Short enough that a hung

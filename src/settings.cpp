@@ -45,6 +45,7 @@ static void loadDefaults() {
     settings.refreshOpenMs   = MKT_REFRESH_OPEN_MS;
     settings.refreshEdgeMs   = MKT_REFRESH_EDGE_MS;
     settings.refreshClosedMs = MKT_REFRESH_CLOSED_MS;
+    settings.webhookUrl[0]   = '\0';   // off by default, like the loan start date
 }
 
 // Nothing downstream should have to defend itself against a bad stored value.
@@ -64,6 +65,11 @@ static void settingsClamp() {
     if (settings.tz[0] == '\0') strncpy(settings.tz, TZ_INFO, TZ_MAX - 1);
     if (settings.baseCurrency[0] == '\0') strncpy(settings.baseCurrency, BASE_CURRENCY_DEFAULT, CCY_MAX - 1);
     if (settings.fxUrl[0] == '\0') strncpy(settings.fxUrl, FX_URL_DEFAULT, FXURL_MAX - 1);
+    // There is no fallback URL to repair this one to - unlike fxUrl, "off" is a
+    // legitimate value - so a stored value that is not even https is disabled
+    // rather than handed to alertsCheck() to defend against.
+    if (settings.webhookUrl[0] && strncmp(settings.webhookUrl, "https://", 8) != 0)
+        settings.webhookUrl[0] = '\0';
 
     // Floors exist because a cycle is one request per position: polling faster
     // than a cycle can finish would only queue requests behind themselves.
@@ -99,6 +105,7 @@ void settingsSave() {
     prefs.putULong ("rOpen", settings.refreshOpenMs);
     prefs.putULong ("rEdge", settings.refreshEdgeMs);
     prefs.putULong ("rShut", settings.refreshClosedMs);
+    prefs.putString("whook", settings.webhookUrl);
     prefs.end();
     Serial.printf("[cfg]   saved\n");
 }
@@ -120,6 +127,7 @@ void settingsBegin() {
     String tz                = prefs.getString("tz",    settings.tz);
     String lst               = prefs.getString("lStart", settings.loanStart);
     String lsy               = prefs.getString("lSyms",  settings.loanSymbols);
+    String whook             = prefs.getString("whook", settings.webhookUrl);
     settings.loanTranche     = prefs.getFloat ("lAmt",   settings.loanTranche);
     settings.loanRatePct     = prefs.getFloat ("lRate",  settings.loanRatePct);
     settings.loanIntervalM   = prefs.getUChar ("lIvl",   settings.loanIntervalM);
@@ -144,6 +152,11 @@ void settingsBegin() {
     // substitute the fallback and switch the feature on with a wrong date.
     strncpy(settings.loanStart, lst.c_str(), sizeof(settings.loanStart) - 1);
     settings.loanStart[sizeof(settings.loanStart) - 1] = '\0';
+    // Same reasoning as loanStart: empty means the feature is off, so it is
+    // copied verbatim rather than through copyString, which would substitute
+    // the (nonexistent) fallback and leave a stray value behind instead of off.
+    strncpy(settings.webhookUrl, whook.c_str(), sizeof(settings.webhookUrl) - 1);
+    settings.webhookUrl[sizeof(settings.webhookUrl) - 1] = '\0';
     copyString(settings.loanSymbols, sizeof(settings.loanSymbols), lsy, LOAN_SYMBOLS_DEFAULT);
     copyString(settings.baseCurrency, CCY_MAX,   ccy, BASE_CURRENCY_DEFAULT);
     copyString(settings.fxUrl,        FXURL_MAX, fxu, FX_URL_DEFAULT);
@@ -298,6 +311,17 @@ bool settingsApply(const char* key, const char* value) {
     if (!strcmp(key, "tz")) {
         if (!value[0] || strlen(value) >= TZ_MAX) { snprintf(s_err, sizeof(s_err), "timezone empty or too long"); return false; }
         strncpy(settings.tz, value, TZ_MAX - 1); settings.tz[TZ_MAX - 1] = '\0'; return true;
+    }
+    if (!strcmp(key, "whook")) {
+        // Empty is legitimate and meaningful: it switches alerts off entirely,
+        // same as an empty loan start date switches the loan view off.
+        if (!value[0]) { settings.webhookUrl[0] = '\0'; return true; }
+        if (strncmp(value, "https://", 8) != 0 || strlen(value) >= WEBHOOK_MAX) {
+            snprintf(s_err, sizeof(s_err), "webhook URL must be https and under %d chars", WEBHOOK_MAX);
+            return false;
+        }
+        strncpy(settings.webhookUrl, value, WEBHOOK_MAX - 1); settings.webhookUrl[WEBHOOK_MAX - 1] = '\0';
+        return true;
     }
     if (!strcmp(key, "rOpen") || !strcmp(key, "rEdge") || !strcmp(key, "rShut")) {
         if (!toULong(value, &n) || n < 5 || n > 3600) { snprintf(s_err, sizeof(s_err), "interval must be 5-3600 seconds"); return false; }

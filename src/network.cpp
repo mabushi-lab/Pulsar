@@ -7,6 +7,7 @@
 #include "fx.h"
 #include "history.h"
 #include "loan.h"
+#include "alerts.h"
 #include "secrets.h"
 #include <ArduinoOTA.h>
 #include <esp_task_wdt.h>
@@ -349,7 +350,7 @@ Nothing is sent anywhere; positions are stored on the device and priced with pub
                 "<td class=\"num %s\">%s</td>"
                 "<td class=\"num %s\">%s%s %s</td></tr>",
                 label, act + 1, tgt + 1,
-                mag >= 2.0 ? "warn" : "good", drift,
+                mag >= DRIFT_WARN_PCT ? "warn" : "good", drift,
                 mag >= 0.5 ? "" : "dim", reb >= 0 ? "+" : "", amt, settings.baseCurrency);
             sendChunk(row);
         }
@@ -631,6 +632,25 @@ a{color:#33CCFF}</style></head>
         sendChunk(buf);
     }
 
+    {
+        // Same reasoning as the loan-symbols and tz/fxurl fields above: never
+        // character-restricted at save time, so escape it before it lands in a
+        // value="" attribute.
+        static char whook[512];
+        htmlEscape(whook, sizeof(whook), settings.webhookUrl);
+        snprintf(buf, sizeof(buf),
+            "<hr><h2>Alerts</h2>"
+            "<p class=\"note\">Optional. Posts a short message here the moment a probable "
+            "stock split, a loan symbol matching no position, or a fund drifted past target "
+            "starts or clears &mdash; once at the change, not on every refresh. Sends a "
+            "Slack-compatible <code>{\"text\": \"...\"}</code> body; point it at a relay for "
+            "another service. Leave empty to turn this off.</p>"
+            "<label>Webhook URL<input name=\"whook\" value=\"%s\" "
+            "placeholder=\"https://hooks.slack.com/services/...\"></label>",
+            whook);
+        sendChunk(buf);
+    }
+
     snprintf(buf, sizeof(buf),
         "<p class=\"note\">Refresh intervals, in seconds. A cycle is one request per position, "
         "so very short intervals invite HTTP 429.</p>"
@@ -643,6 +663,9 @@ a{color:#33CCFF}</style></head>
         (unsigned long)(settings.refreshEdgeMs   / 1000UL),
         (unsigned long)(settings.refreshClosedMs / 1000UL));
     sendChunk(buf);
+
+    sendChunk("<form method=\"POST\" action=\"/alert-test\">"
+              "<button type=\"submit\">Send test alert</button></form>");
 
     sendChunk("<form method=\"POST\" action=\"/settings\" "
               "onsubmit=\"return confirm('Reset all settings to firmware defaults?')\">"
@@ -685,7 +708,8 @@ static void onSettingsSave() {
     // full backup first and restoring it on any failure makes the whole POST
     // atomic: every key applies, or none of them visibly do.
     static const char* KEYS[] = { "rot","bri","view","amt","nDim","nBri","nStart","nEnd",
-                                  "lStart","lAmt","lIvl","lN","lRate","lSyms","ccy","fxurl","tz","rOpen","rEdge","rShut" };
+                                  "lStart","lAmt","lIvl","lN","lRate","lSyms","ccy","fxurl","tz",
+                                  "whook","rOpen","rEdge","rShut" };
     static Settings backup;
     backup = settings;
 
@@ -740,6 +764,30 @@ static void onRefresh() {
     if (!mayAccess()) return;
     refreshRequested = true;
     server.send(200, "application/json", R"({"ok":true})");
+}
+
+static void onAlertTest() {
+    if (!mayAccess()) return;
+    // Unlike a settings save, this is the entire point of the click: the user
+    // wants to know right now whether the URL works, so it blocks for the
+    // length of one HTTPS POST rather than deferring - the same up-to-8s
+    // tradeoff fetchQuote() and fxFetch() already make from loop() itself, just
+    // triggered here by a button instead of the refresh schedule.
+    if (!settings.webhookUrl[0]) {
+        server.send(200, "text/html",
+            "<!DOCTYPE html><html><head><meta http-equiv=\"refresh\" content=\"2; url=/settings\">"
+            "<style>body{background:#06080F;color:#FFAA33;font-family:monospace;margin:40px}</style>"
+            "</head><body>No webhook URL is set.</body></html>");
+        return;
+    }
+    const bool ok = alertsSendTest();
+    server.send(200, "text/html",
+        ok ? "<!DOCTYPE html><html><head><meta http-equiv=\"refresh\" content=\"2; url=/settings\">"
+             "<style>body{background:#06080F;color:#00CC55;font-family:monospace;margin:40px}</style>"
+             "</head><body>Test alert sent.</body></html>"
+           : "<!DOCTYPE html><html><head><meta http-equiv=\"refresh\" content=\"2; url=/settings\">"
+             "<style>body{background:#06080F;color:#FF3344;font-family:monospace;margin:40px}</style>"
+             "</head><body>Test alert failed - check the URL and the serial log.</body></html>");
 }
 
 // ── Wi-Fi ─────────────────────────────────────────────────────────────────────
@@ -901,5 +949,6 @@ void setupServer() {
     server.on("/settings", HTTP_GET,  onSettings);
     server.on("/settings", HTTP_POST, onSettingsSave);
     server.on("/history",  HTTP_POST, onHistoryClear);
+    server.on("/alert-test", HTTP_POST, onAlertTest);
     server.begin();
 }
