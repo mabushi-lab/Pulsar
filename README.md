@@ -17,7 +17,7 @@ Five screens at four stops on the **BOOT** long-press cycle:
 
 - **Positions** - your holdings in a 2x3 grid with live price and day change, paged if you hold more than six
 - **Detail** - one position full-screen: price, day change, units and total return. The day figure says **last close** when that instrument's own venue is shut, which is not the same question as whether the portfolio's is
-- **Portfolio** - **total return** as the headline figure, with the day's move beneath it as context; total value sits in the corner. Amounts can be hidden if the screen is somewhere public. When every venue you hold is shut, the day figure says **last close** rather than **today**. A 7- and 30-day return sits below that, once daily history actually reaches back that far - see [Value history](#value-history) below
+- **Portfolio** - **total return** as the headline figure, with the day's move beneath it as context; total value sits in the corner. Amounts can be hidden if the screen is somewhere public. When every venue you hold is shut, the day figure says **last close** rather than **today**. A 7-day, 30-day and year-to-date return sits below that, each once daily history actually reaches back that far - the year-to-date figure in particular only ever shows January through roughly April, by design - see [Value history](#value-history) below
 - **Loan** - for money that was borrowed to invest: what has been drawn, what it has cost in interest, what it bought is worth, and **net equity** as the headline
 - **Allocation** - *reached with USER from the Loan screen* - each targeted fund as a bar against its target, drift in percentage points, and the amount that would close the worst gap
 
@@ -152,7 +152,11 @@ History lives in NVS, and NVS is flash. A cycle completes every 15 seconds while
 
 ### Value history
 
-One value-and-cost snapshot is recorded per calendar day, which is what the Portfolio screen's 7- and 30-day return is drawn from. It looks up the closest recorded day *at or before* the target date rather than an exact match, because a device that was off for a stretch has ordinary gaps in the series - but a gap wider than the window itself is declined rather than mislabelled: a 7-day figure is never quietly answered with a point that is actually three weeks old. Until the series reaches back that far, the line simply does not appear.
+One value-and-cost snapshot is recorded per calendar day, which is what the Portfolio screen's 7-day, 30-day and year-to-date return are drawn from. Each looks up the closest recorded day *at or before* the target date rather than an exact match, because a device that was off for a stretch has ordinary gaps in the series - but a gap too wide is declined rather than mislabelled: a 7-day figure is never quietly answered with a point that is actually three weeks old. The 7- and 30-day figures tolerate a gap up to their own window; the year-to-date figure uses a tight 14-day tolerance instead of one scaled to how far back January 1st is, or a device that was merely off for the holidays would get a "January 1st" figure built from a point months later. Any figure whose window has moved the cost basis - a deposit, a withdrawal, a newly tracked position - is also declined: a value comparison across a changed cost basis is a change of principal wearing a return's clothes, not the return itself.
+
+Whichever figures fit are shown together on one line; if the combined line would not fit the panel at the current font, the least essential one is dropped first (year-to-date, then 30-day) rather than letting it run off the edge.
+
+History is kept in a ~4-month ring buffer (`HISTORY_MAX` in `history.h`), sized against the shared 20 KB NVS partition rather than a full year - the 7- and 30-day figures never need more than that. Year-to-date is different: rather than tripling that buffer (and this device's NVS usage) to reach back to January 1st, a single point *from* January 1st is captured and persisted separately the moment that day is actually recorded, independent of the ring buffer's own ~4-month reach. That point survives long after the ring buffer would otherwise have aged it out, so year-to-date works all year, every year - once this device has run across at least one January 1st with this feature in place. Before that first January 1st (or right after a **Clear history**, which wipes the anchor along with everything else), year-to-date falls back to the ring buffer directly and is only ever available January through roughly the end of April, silently and correctly absent the rest of the year rather than shown from a stale point.
 
 ### Allocation and drift
 
@@ -172,7 +176,9 @@ The dashboard warns, in place rather than in a diagnostics table, when a symbol 
 
 ### Alerts
 
-Optional, and off unless a webhook URL is set under **Alerts** in Settings. When set, the device posts a `{"text": "..."}` body - the shape Slack's incoming webhooks expect, and a form most self-hosted relays accept - the moment one of the conditions above starts or clears: a probable stock split, a loan symbol matching no position, or a fund drifted past the same threshold the Portfolio and Allocation screens already draw in orange. Each fires once at the change, not on every refresh cycle, so an unresolved condition does not turn into a ping every fifteen seconds. A **Send test alert** button next to the field posts a fixed message immediately, so setting the URL up does not mean waiting for a real warning to find out it works.
+Optional, and off unless a webhook URL is set under **Alerts** in Settings. When set, the device posts a `{"text": "..."}` body - the shape Slack's incoming webhooks expect, and a form most self-hosted relays accept - the moment one of four conditions starts or clears: a probable stock split, a loan symbol matching no position, a held position that has failed to price for `STALE_ALERT_CYCLES` fetch cycles in a row (`config.h`; 3 by default), or a fund drifted past the same threshold the Portfolio and Allocation screens already draw in orange. Each fires once at the change, not on every refresh cycle, so an unresolved condition does not turn into a ping every fifteen seconds. A **Send test alert** button next to the field posts a fixed message immediately, so setting the URL up does not mean waiting for a real warning to find out it works.
+
+At most one webhook posts per completed fetch cycle, to keep a burst of blocking HTTPS requests from running past the watchdog timeout. This means a feed-wide outage - the quote provider rate-limiting or unreachable, not any one bad symbol - can still produce one message per held position as each crosses the stale threshold on its own cycle, and another round on recovery: six holdings going stale together is six separate webhooks, not one. That is a known consequence of the one-post-per-cycle rule, not a bug.
 
 Nothing quantitative ever goes in a message - no price, no value, no position size - only which condition changed and a fund's own label. The connection is unverified TLS, the same posture as every other outbound request this device makes (see [Why there is no broker integration](#why-there-is-no-broker-integration) and the note on quote fetching below): what it could leak is already visible in full to anyone with LAN access to the web dashboard, which is unauthenticated by default.
 
@@ -245,7 +251,7 @@ Everything logs to the serial monitor at 115200:
 [ota]   ready: pio run -t upload --upload-port pulsar.local
 ```
 
-The **Fetching** section of the web app shows the same state without a serial cable: whether a cycle is running and where, cycles completed, time since the last one, the current interval, FX rate state, history depth and flash writes, OTA status, free heap, uptime and **boot count**.
+The **Fetching** section of the web app shows the same state without a serial cable: whether a cycle is running and where, cycles completed, time since the last one, the current interval, FX rate state, history depth and flash writes, OTA status, free heap, uptime, **boot count** and the **reset reason** for the boot in progress (power-on, firmware update, deep sleep wake, or a watchdog/panic/brownout, flagged in orange) - the boot count says a device is resetting often, and the reset reason says whether that is someone power-cycling it on purpose or the watchdog catching a hang.
 
 - **Free heap falling steadily** over days points at fragmentation from the per-request TLS buffers, which ends with every fetch failing at once rather than gradually. The low-water figure beside it is the number that shows the trend; the watchdog and boot counter are what catch it if it gets that far.
 
@@ -272,9 +278,9 @@ src/
   fx.h
   loan.cpp       - drawdown schedule, capitalised interest, net equity
   loan.h
-  history.cpp    - daily value snapshots, the 7/30-day return lookup
+  history.cpp    - daily value snapshots, the 7/30-day/YTD return lookup
   history.h
-  alerts.cpp     - optional webhook alerts on split/loan-typo/drift conditions
+  alerts.cpp     - optional webhook alerts on split/loan-typo/stale/drift conditions
   alerts.h
   display.cpp    - LovyanGFX drawing, the five screens, night dimming, OTA screen
   display.h

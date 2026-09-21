@@ -4,9 +4,10 @@
 // Optional. Off unless settings.webhookUrl is set (see Settings in settings.h).
 // Fires a Slack-compatible {"text": "..."} POST when one of the conditions the
 // device already detects but only shows passively on screen starts or clears:
-// a probable stock split, a loan-list symbol that matches no position, or a
-// fund drifted past DRIFT_WARN_PCT. Each fires once at the transition, not on
-// every fetch cycle, so a single unresolved condition does not turn into a
+// a probable stock split, a loan-list symbol that matches no position, a
+// held position that has stopped pricing for STALE_ALERT_CYCLES in a row, or
+// a fund drifted past DRIFT_WARN_PCT. Each fires once at the transition, not
+// on every fetch cycle, so a single unresolved condition does not turn into a
 // webhook ping every fifteen seconds.
 
 // Evaluates the current state against what was last reported and posts for

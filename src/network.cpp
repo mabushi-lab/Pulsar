@@ -11,6 +11,7 @@
 #include "secrets.h"
 #include <ArduinoOTA.h>
 #include <esp_task_wdt.h>
+#include <esp_system.h>
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include <time.h>
@@ -87,6 +88,33 @@ static void htmlEscape(char* out, size_t outSize, const char* in) {
         }
     }
     out[o] = '\0';
+}
+
+// What actually ended the previous boot, for the Fetching table below. A
+// rising boot count already on that page says a device that resets often;
+// this says whether that is someone power-cycling it on purpose or the
+// watchdog catching a hang no amount of watching the screen would reveal.
+static const char* resetReasonLabel(esp_reset_reason_t r) {
+    switch (r) {
+        case ESP_RST_POWERON:   return "power-on";
+        case ESP_RST_SW:        return "firmware update";
+        case ESP_RST_DEEPSLEEP: return "deep sleep wake";
+        case ESP_RST_PANIC:     return "crash";
+        case ESP_RST_INT_WDT:   return "interrupt watchdog";
+        case ESP_RST_TASK_WDT:  return "task watchdog";
+        case ESP_RST_WDT:       return "other watchdog";
+        case ESP_RST_BROWNOUT:  return "brownout (power dip)";
+        default:                return "unknown";
+    }
+}
+
+static bool resetReasonIsBad(esp_reset_reason_t r) {
+    switch (r) {
+        case ESP_RST_POWERON: case ESP_RST_SW: case ESP_RST_DEEPSLEEP:
+            return false;
+        default:
+            return true;
+    }
 }
 
 // Returns false having already answered the request, so a handler's first line
@@ -303,7 +331,8 @@ Nothing is sent anywhere; positions are stored on the device and priced with pub
             "<tr><td>Firmware update</td><td class=\"%s\">%s</td></tr>"
             "<tr><td>Free heap</td><td class=\"%s\">%lu bytes (low water %lu)</td></tr>"
             "<tr><td>Uptime</td><td>%lus</td></tr>"
-            "<tr><td>Boots</td><td class=\"%s\">%lu</td></tr></table>",
+            "<tr><td>Boots</td><td class=\"%s\">%lu</td></tr>"
+            "<tr><td>Last reset</td><td class=\"%s\">%s</td></tr></table>",
             pos, (unsigned long)marketsCyclesCompleted(), since,
             (unsigned long)(marketsRefreshMs() / 1000UL),
             fxCount(), fxBaseCode(),
@@ -316,7 +345,9 @@ Nothing is sent anywhere; positions are stored on the device and priced with pub
             ESP.getMinFreeHeap() < 40000 ? "warn" : "",
             (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMinFreeHeap(),
             (unsigned long)(nowMs / 1000UL),
-            settingsBootCount() > 20 ? "warn" : "", (unsigned long)settingsBootCount());
+            settingsBootCount() > 20 ? "warn" : "", (unsigned long)settingsBootCount(),
+            resetReasonIsBad(esp_reset_reason()) ? "warn" : "",
+            resetReasonLabel(esp_reset_reason()));
         sendChunk(buf);
     }
 

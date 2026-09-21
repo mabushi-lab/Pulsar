@@ -162,6 +162,15 @@ const uint32_t QUOTE_SKEW_MAX_S = 36UL * 3600UL;
 // notification can never disagree about what counts as "off target".
 const double DRIFT_WARN_PCT = 2.0;
 
+// A held position failing to price for this many consecutive fetch cycles
+// stops looking like the ordinary single rate-limited response fetchPosition()
+// already tolerates and starts looking like a dead symbol, a delisting, or a
+// feed that is down - worth a webhook rather than only a quiet "stale" label
+// on screen. Counted in cycles, not seconds, because the cycle is already the
+// unit the rest of the polling model uses and it stretches and shrinks with
+// the same session-aware interval a stale price is judged against.
+const int STALE_ALERT_CYCLES = 3;
+
 // ── Watchdog ──────────────────────────────────────────────────────────────────
 // Long enough that no legitimate blocking call trips it: one quote is an 8 s
 // connect plus an 8 s read on top of a TLS handshake. Short enough that a hung

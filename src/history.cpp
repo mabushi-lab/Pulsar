@@ -29,8 +29,10 @@ static uint16_t historyDayIndex(const struct tm& t) {
 // than the window itself would silently answer "7-day return" with a point
 // that is actually three weeks old, which is worse than not answering, so
 // that case is declined rather than mislabelled.
-bool historyValueDaysAgo(const struct tm& today, int days, double* value, double* cost) {
+bool historyValueDaysAgo(const struct tm& today, int days, double* value, double* cost,
+                          int maxGapDays) {
     if (!value || !cost || days <= 0 || s_count == 0) return false;
+    if (maxGapDays < 0) maxGapDays = days;
     const uint16_t todayIdx = historyDayIndex(today);
     if (todayIdx < (uint16_t)days) return false;   // the series can't reach that far back
     const uint16_t target = (uint16_t)(todayIdx - days);
@@ -41,10 +43,29 @@ bool historyValueDaysAgo(const struct tm& today, int days, double* value, double
         best = i;
     }
     if (best < 0) return false;
-    if ((uint16_t)(target - s_points[best].day) > (uint16_t)days) return false;
+    if ((uint16_t)(target - s_points[best].day) > (uint16_t)maxGapDays) return false;
 
     *value = s_points[best].value;
     *cost  = s_points[best].cost;
+    return true;
+}
+
+// One point from January 1st, kept forever - independent of the ~4-month ring
+// buffer above, and the reason a year-to-date figure is not limited to the
+// January-April window that buffer alone would allow. ~10 bytes and one more
+// NVS key bought a full year's reach rather than tripling HISTORY_MAX, which
+// would have meant tripling this device's already-tight shared NVS partition
+// (see history.h) for the same result.
+static DayPoint s_yearAnchor      = {};
+static bool     s_yearAnchorValid = false;
+
+bool historyYearStart(const struct tm& today, double* value, double* cost) {
+    if (!value || !cost || !s_yearAnchorValid) return false;
+    const uint16_t todayIdx = historyDayIndex(today);
+    const uint16_t jan1     = (uint16_t)(todayIdx - today.tm_yday);
+    if (s_yearAnchor.day != jan1) return false;   // the anchor on file is a different year
+    *value = s_yearAnchor.value;
+    *cost  = s_yearAnchor.cost;
     return true;
 }
 
@@ -82,14 +103,44 @@ void historyBegin() {
     s_count = prefs.getInt("n", 0);
     if (s_count > 0 && s_count <= HISTORY_MAX) prefs.getBytes("pts", s_points, sizeof(DayPoint) * s_count);
     else s_count = 0;
+    s_yearAnchorValid = prefs.getBool("ancOk", false);
+    if (s_yearAnchorValid) prefs.getBytes("anchor", &s_yearAnchor, sizeof(DayPoint));
     prefs.end();
-    Serial.printf("[hist]  %d day(s) of history\n", s_count);
+    Serial.printf("[hist]  %d day(s) of history%s\n", s_count,
+                  s_yearAnchorValid ? ", year anchor set" : "");
 }
 
 void historyClear() {
     s_count = 0;
     memset(s_points, 0, sizeof(s_points));
-    save();
+    s_yearAnchor      = {};
+    s_yearAnchorValid = false;
+    s_writes++;
+    s_lastSaveMs = millis();
+    s_dirty      = false;
+    prefs.begin(NVS_NS, false);
+    prefs.putInt("n", s_count);
+    prefs.putBytes("pts", s_points, sizeof(DayPoint) * s_count);
+    prefs.putBool("ancOk", false);
+    prefs.end();
+}
+
+// Captured the moment a January 1st is actually recorded, not derived after
+// the fact from the ring buffer above - so it survives long after that
+// buffer's ~4-month reach would otherwise let the same information lapse.
+// tm_yday == 0 is exactly "today is January 1st"; repeat calls on the same
+// January 1st simply refresh the same day's figure, the same as the ring
+// buffer's own same-day overwrite just above.
+static void maybeCaptureYearAnchor(const struct tm& t, uint16_t day, double value, double cost) {
+    if (t.tm_yday != 0) return;
+    s_yearAnchor.day   = day;
+    s_yearAnchor.value = (float)value;
+    s_yearAnchor.cost  = (float)cost;
+    s_yearAnchorValid  = true;
+    prefs.begin(NVS_NS, false);
+    prefs.putBytes("anchor", &s_yearAnchor, sizeof(DayPoint));
+    prefs.putBool("ancOk", true);
+    prefs.end();
 }
 
 bool historyRecord(const struct tm& t, double value, double cost) {
@@ -101,6 +152,7 @@ bool historyRecord(const struct tm& t, double value, double cost) {
         s_points[s_count - 1].value = (float)value;
         s_points[s_count - 1].cost  = (float)cost;
         saveThrottled();
+        maybeCaptureYearAnchor(t, day, value, cost);
         return false;
     }
 
@@ -117,6 +169,7 @@ bool historyRecord(const struct tm& t, double value, double cost) {
     s_points[s_count].cost  = (float)cost;
     s_count++;
     save();
+    maybeCaptureYearAnchor(t, day, value, cost);
     Serial.printf("[hist]  day %u recorded: value=%.2f cost=%.2f (%d stored)\n",
                   day, value, cost, s_count);
     return true;

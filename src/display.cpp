@@ -782,17 +782,17 @@ void drawPortfolio() {
 
     // A window return, only when the recorded history actually reaches back
     // that far - historyValueDaysAgo() declines rather than stretch a gap into
-    // an answer, so this stays empty until there is a real week or month of
-    // daily snapshots behind it. Also declines if the cost basis on file that
-    // day differs from today's: a changed quantity or a new position moved the
-    // cost basis, and a value comparison across that gap is a deposit or a
-    // withdrawal wearing a market return's clothes, not the return itself.
-    char win[56] = "";
+    // an answer, so each figure stays empty until there is a real week, month
+    // or year of daily snapshots behind it. Also declines if the cost basis on
+    // file that day differs from today's: a changed quantity or a new position
+    // moved the cost basis, and a value comparison across that gap is a
+    // deposit or a withdrawal wearing a market return's clothes, not the
+    // return itself.
+    char p7[24] = "", p30[24] = "", pYtd[24] = "";
     {
         struct tm tNow;
         if (localNow(&tNow)) {
-            double v7 = 0, c7 = 0, v30 = 0, c30 = 0;
-            char p7[24] = "", p30[24] = "";
+            double v7 = 0, c7 = 0, v30 = 0, c30 = 0, vYtd = 0, cYtd = 0;
             // A cent or two of drift is float rounding across the value's trip
             // through a float in NVS and back; a real deposit or edit moves the
             // cost basis by whole units of currency, not fractions of one.
@@ -809,8 +809,27 @@ void drawPortfolio() {
                 fmtPct(b, sizeof(b), (t.value - v30) / v30 * 100.0, 1);
                 snprintf(p30, sizeof(p30), "30d %s", b);
             }
-            if (p7[0] && p30[0]) snprintf(win, sizeof(win), "%s   %s", p7, p30);
-            else                 snprintf(win, sizeof(win), "%s%s", p7, p30);
+            // historyYearStart() is the persisted January 1st anchor (see
+            // history.h) and covers the whole year once this device has run
+            // across at least one New Year's. Until then - or if that anchor
+            // was lost to a historyClear() - fall back to the ~4-month ring
+            // buffer: "days back" to January 1st is just today's day-of-year,
+            // and a tight 14-day gap tolerance (not the 7/30 default of
+            // matching the window itself) keeps a late-year query from
+            // accepting a point months stale and calling it "January 1st".
+            // That fallback only ever resolves January through roughly April,
+            // since HISTORY_MAX (~4 months, see history.h) cannot reach
+            // further back than that - silent, correctly, the rest of the
+            // year until the anchor takes over for good.
+            bool haveYtd = historyYearStart(tNow, &vYtd, &cYtd);
+            if (!haveYtd && tNow.tm_yday > 0)
+                haveYtd = historyValueDaysAgo(tNow, tNow.tm_yday, &vYtd, &cYtd, 14);
+            if (haveYtd && vYtd > 0 &&
+                (cYtd - t.cost < costTol && t.cost - cYtd < costTol)) {
+                char b[16];
+                fmtPct(b, sizeof(b), (t.value - vYtd) / vYtd * 100.0, 1);
+                snprintf(pYtd, sizeof(pYtd), "YTD %s", b);
+            }
         }
     }
 
@@ -850,8 +869,28 @@ void drawPortfolio() {
         snprintf(msg, sizeof(msg), "%s %s from target", positions[wi].label, driftBuf);
         lcd.setTextColor(mag >= DRIFT_WARN_PCT ? 0xFFAA00 : C_MUTED, C_BG);
         lcd.drawString(msg, cx, y + h - 10);
-    } else if (win[0]) {
+    } else if (p7[0] || p30[0] || pYtd[0]) {
         lcd.setTextColor(C_LABEL, C_BG);
+        const char* parts[3];
+        int nParts = 0;
+        if (p7[0])   parts[nParts++] = p7;
+        if (p30[0])  parts[nParts++] = p30;
+        if (pYtd[0]) parts[nParts++] = pYtd;
+
+        // Drops the least essential figure first - YTD, then 30d - if the full
+        // line would run past the panel at this font. Measured with the font
+        // this line actually draws in (Font2 was just set above), rather than
+        // guessed from a character budget a different font size would
+        // invalidate.
+        char win[88];
+        for (int keep = nParts; keep >= 1; keep--) {
+            win[0] = '\0';
+            for (int i = 0; i < keep; i++) {
+                if (i > 0) strncat(win, "   ", sizeof(win) - strlen(win) - 1);
+                strncat(win, parts[i], sizeof(win) - strlen(win) - 1);
+            }
+            if (lcd.textWidth(win) <= W - 12) break;
+        }
         lcd.drawString(win, cx, y + h - 10);
     } else {
         lcd.setTextColor(C_MUTED, C_BG);

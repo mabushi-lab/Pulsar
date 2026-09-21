@@ -103,6 +103,61 @@ static bool checkLoanUnmatched() {
     return true;
 }
 
+// Per-position, unlike the three latches above: "which holding stopped pricing"
+// is the entire message, so a single shared latch could only ever say that
+// *something* is stale, which the Portfolio screen already does for free.
+// Indexed by array position, so an edit to the position list that reorders or
+// replaces a row starts that slot's count over rather than misattributing an
+// existing streak - a one-cycle-late alert is a fair price for not needing a
+// symbol-keyed lookup on every cycle.
+static uint8_t s_staleCycles[POSITION_MAX] = {};
+static bool    s_staleActive[POSITION_MAX] = {};
+
+// Counts every position every call, unconditionally - unlike the three checks
+// above, this cannot be folded into a single pass that also posts. Posting
+// stops at the first transition found (the one-webhook-per-call rule), but a
+// feed-wide outage makes every held position go stale on the same cycle, and
+// only counting the ones a loop happens to reach before it returns would
+// leave index 0 alerting on cycle 3 while the rest are still stuck on cycle 1.
+static void updateStaleCounts() {
+    for (int i = 0; i < positionCount; i++) {
+        const Position& p = positions[i];
+        if (!positionIsHeld(p)) {
+            // A watchlist row, or a holding whose quantity was just zeroed out:
+            // either way there is nothing to track, and clearing the latch too
+            // stops a stale holding that got sold from firing a stray "pricing
+            // again" if it is ever re-held later.
+            s_staleCycles[i] = 0;
+            s_staleActive[i] = false;
+            continue;
+        }
+        if (p.stale) {
+            if (s_staleCycles[i] < 255) s_staleCycles[i]++;
+        } else if (p.fetched) {
+            s_staleCycles[i] = 0;
+        }
+    }
+}
+
+static bool checkStale() {
+    for (int i = 0; i < positionCount; i++) {
+        if (!positionIsHeld(positions[i])) continue;
+        const bool bad = s_staleCycles[i] >= STALE_ALERT_CYCLES;
+        if (bad == s_staleActive[i]) continue;
+
+        const Position& p = positions[i];
+        char msg[128];
+        if (bad) snprintf(msg, sizeof(msg),
+                          "Pulsar: %s has not priced for %d fetch cycles - check the symbol or the feed.",
+                          p.label, s_staleCycles[i]);
+        else     snprintf(msg, sizeof(msg), "Pulsar: %s is pricing again.", p.label);
+        postWebhook(msg);
+        s_staleActive[i] = bad;
+        return true;
+    }
+    return false;
+}
+
 // The worst-off targeted fund crossing the same threshold the Portfolio and
 // Allocation screens already flag in orange. A little hysteresis around the
 // line keeps a fund sitting right on the boundary from firing on and off
@@ -151,15 +206,23 @@ void alertsCheck() {
     // once the link came back.
     if (!settings.webhookUrl[0] || !wifiConnected()) return;
 
+    // Always, regardless of which check below ends up posting: this is
+    // counting, not posting, and every held position needs its count moved
+    // forward on every cycle or a feed-wide outage would count at a different
+    // rate for whichever position happens to come first in the array.
+    updateStaleCounts();
+
     // At most one webhook per call. Each is a blocking HTTPS POST - up to 8s
     // connect plus 8s read, the same budget fetchQuote() and fxFetch() already
-    // spend per request - and three conditions can plausibly change in the
-    // same cycle (a loan typo and a drift past target, say). Sending all three
-    // back to back would run past WDT_TIMEOUT_S (45s) and panic-reboot, which
-    // resets every latch to false and fires the same alerts again on the next
-    // boot: a reboot loop caused by the alerting feature itself. One completed
-    // cycle is 15s-15min away, so the next condition is never far behind.
+    // spend per request - and more than one of these four can plausibly change
+    // in the same cycle (a loan typo and a drift past target, say). Sending
+    // them all back to back would run past WDT_TIMEOUT_S (45s) and
+    // panic-reboot, which resets every latch to false and fires the same
+    // alerts again on the next boot: a reboot loop caused by the alerting
+    // feature itself. One completed cycle is 15s-15min away, so the next
+    // condition is never far behind.
     if (checkSuspect()) return;
     if (checkLoanUnmatched()) return;
+    if (checkStale()) return;
     checkDrift();
 }

@@ -10,6 +10,19 @@
 // it produced was a backtest of today's holdings wearing a chart's clothes. The
 // Portfolio screen's 7- and 30-day return (historyValueDaysAgo(), below) is
 // what that patience paid for.
+// ~4 months, not a full year: the Portfolio screen's year-to-date figure
+// would want a point from January 1st still on file in December, and this
+// buffer is deliberately not sized for that. The board's default partition
+// table (default_16MB.csv, in the espressif32 platform package - this
+// project defines no partitions.csv of its own) gives the whole device one
+// 20 KB NVS partition, shared with every other namespace this firmware keeps
+// - settings, the portfolio and loan text, FX rates, Wi-Fi credentials - and
+// tripling this blob to cover a full year was not a trade worth making
+// unverified against how much of that partition the rest of the device
+// actually needs. YTD is asked for the same way 7d/30d are and simply
+// declines outside roughly January-April as a result (see the caller in
+// display.cpp) - correctly, per this function's own "declined rather than
+// stretch a gap into an answer" rule, not as a bug.
 const int HISTORY_MAX = 120;      // ~4 months; 120 × 10 bytes = 1.2 KB
 
 struct DayPoint {
@@ -46,12 +59,31 @@ void            historyClear();
 
 // Portfolio value and cost basis as of the closest recorded day at least
 // `days` back from `today`. False before the series reaches back that far, or
-// when the closest point on file is itself more than `days` older than the
-// target - a gap that wide would answer a 7-day question with a point that is
-// actually weeks old. The cost basis is not for display - it is what a caller
-// compares against today's to tell a market move from a deposit: a window
-// return computed across a changed cost basis is a change of principal wearing
-// a return's clothes, and would be wrong exactly like the "backtest of today's
-// holdings" the top of this file already declined to build.
-bool historyValueDaysAgo(const struct tm& today, int days, double* value, double* cost);
+// when the closest point on file is itself more than `maxGapDays` older than
+// the target - a gap that wide would answer a 7-day question with a point
+// that is actually weeks old. The cost basis is not for display - it is what
+// a caller compares against today's to tell a market move from a deposit: a
+// window return computed across a changed cost basis is a change of
+// principal wearing a return's clothes, and would be wrong exactly like the
+// "backtest of today's holdings" the top of this file already declined to
+// build.
+//
+// `maxGapDays` defaults to `days` itself, which is right for a 7- or 30-day
+// question - a week-old gap either way is tolerable slack for a week-long
+// window. It is wrong for a long window: a year-to-date query several months
+// into the year would, at the default, accept a point most of a year late and
+// call it "January 1st". A caller asking a long question passes a small
+// explicit `maxGapDays` instead, so the tolerance reflects the recording gap
+// actually being forgiven - a device that was off for a couple of weeks -
+// rather than scaling with a window length it has nothing to do with.
+bool historyValueDaysAgo(const struct tm& today, int days, double* value, double* cost,
+                          int maxGapDays = -1);
+
+// The portfolio's value and cost basis as of January 1st of `today`'s year,
+// from a single point captured and persisted the moment that day was actually
+// recorded - not derived from the rolling buffer above, which typically
+// cannot reach back that far past roughly April. False until this device has
+// been running across at least one January 1st, or once a year again after
+// historyClear().
+bool historyYearStart(const struct tm& today, double* value, double* cost);
 
