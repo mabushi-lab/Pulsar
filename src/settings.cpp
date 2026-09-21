@@ -48,7 +48,7 @@ static void loadDefaults() {
 }
 
 // Nothing downstream should have to defend itself against a bad stored value.
-void settingsClamp() {
+static void settingsClamp() {
     if (settings.rotation != 0 && settings.rotation != 2) settings.rotation = 0;
     if (settings.defaultView >= VIEW_COUNT) settings.defaultView = 0;
     if (settings.amountMode  > 2) settings.amountMode  = 2;
@@ -167,7 +167,7 @@ bool settingsInNightWindow(int minute, int startMin, int endMin) {
     return minute >= startMin || minute < endMin;         // wraps midnight
 }
 
-bool settingsParseMinuteOfDay(const char* v, uint16_t* out) {
+static bool settingsParseMinuteOfDay(const char* v, uint16_t* out) {
     if (!v || !v[0]) return false;
     const char* colon = strchr(v, ':');
     char* end = nullptr;

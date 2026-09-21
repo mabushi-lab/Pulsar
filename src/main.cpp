@@ -194,11 +194,6 @@ void loop() {
         if (!marketsCycleActive()) {
             lastMarkets = now;         // cycle complete
             maybeRecordHistory();
-
-            // A device with nothing recorded shows an empty chart for months.
-            // Once prices are in, reconstruct the past from daily closes — once
-            // per boot, and only when there is genuinely nothing to lose.
-
         }
     }
 

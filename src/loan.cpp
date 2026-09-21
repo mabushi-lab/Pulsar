@@ -13,7 +13,7 @@
 // Howard Hinnant's days-from-civil. Worth using verbatim rather than counting
 // leap years by hand: a drawdown schedule that slips a day every four years
 // would misprice the balance in a way nobody would think to look for.
-long loanDaysFromCivil(int y, int m, int d) {
+static long loanDaysFromCivil(int y, int m, int d) {
     y -= m <= 2;
     const long era = (y >= 0 ? y : y - 399) / 400;
     const unsigned yoe = (unsigned)(y - era * 400);
@@ -54,7 +54,7 @@ bool loanParseDate(const char* s, int* y, int* m, int* d) {
     return true;
 }
 
-int loanSchedule(long today, int y, int m, int d, int intervalMonths,
+static int loanSchedule(long today, int y, int m, int d, int intervalMonths,
                  int totalTranches, long* daysAgo, int cap, int* daysToNext) {
     if (daysToNext) *daysToNext = -1;
     if (!daysAgo || cap <= 0 || intervalMonths <= 0 || totalTranches <= 0) return 0;
@@ -74,7 +74,7 @@ int loanSchedule(long today, int y, int m, int d, int intervalMonths,
 }
 
 // ── Compounding ───────────────────────────────────────────────────────────────
-double loanCompound(double tranche, const long* daysAgo, int n, double annualPct) {
+static double loanCompound(double tranche, const long* daysAgo, int n, double annualPct) {
     if (!daysAgo || n <= 0) return 0.0;
     double r = annualPct / 100.0;
     if (r < -0.999) r = -0.999;               // pow() has nothing to say below -100%
@@ -93,7 +93,7 @@ double loanCompound(double tranche, const long* daysAgo, int n, double annualPct
 //
 // loanCompound() rises monotonically with the rate, so bisection is exact
 // enough in 80 steps and cannot diverge the way Newton can on a flat curve.
-double loanImpliedRate(double target, double tranche, const long* daysAgo, int n) {
+static double loanImpliedRate(double target, double tranche, const long* daysAgo, int n) {
     if (!daysAgo || n <= 0 || tranche <= 0 || !(target > 0)) return 0.0;
 
     // Money drawn today has earned nothing yet and implies no rate; without
@@ -111,7 +111,7 @@ double loanImpliedRate(double target, double tranche, const long* daysAgo, int n
 }
 
 // ── Which positions the loan bought ───────────────────────────────────────────
-bool loanFunds(const char* symbol) {
+static bool loanFunds(const char* symbol) {
     if (!symbol || !symbol[0]) return false;
     const char* p = settings.loanSymbols;
     while (*p) {

@@ -7,8 +7,7 @@ static int         s_count = 0;
 static Preferences prefs;
 static const char* NVS_NS = "pulsarhist";
 
-int             historyCount() { return s_count; }
-const DayPoint* historyData()  { return s_points; }
+int historyCount() { return s_count; }
 
 // Days since 2020-01-01. tm_year is years since 1900, tm_yday is 0-based.
 static uint16_t historyDayIndex(const struct tm& t) {

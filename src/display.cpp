@@ -190,7 +190,7 @@ void displayApplyRotation() {
 // until the next dusk or dawn, instead of being undone a second later.
 static int s_lastAuto = -1;
 
-uint8_t displayScheduledBrightness(int minuteOfDay) {
+static uint8_t displayScheduledBrightness(int minuteOfDay) {
     if (!settings.nightDim) return settings.brightness;
     return settingsInNightWindow(minuteOfDay, settings.nightStartMin, settings.nightEndMin)
          ? settings.nightBright : settings.brightness;
@@ -812,9 +812,7 @@ void drawPortfolio() {
     }
 }
 
-// ── Chart ─────────────────────────────────────────────────────────────────────
-// Value over time, with the cost basis as a baseline so a deposit is visually
-// distinct from a gain.
+// ── Allocation ────────────────────────────────────────────────────────────────
 void drawAllocation() {
     const int y  = ROW1_Y;
     const int h  = DIV3_Y - y;

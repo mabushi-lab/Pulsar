@@ -192,7 +192,7 @@ static char* trim(char* s) {
 
 // SYMBOL,QTY,AVGCOST[,LABEL] — blank lines and #comments ignored. Parsed into a
 // scratch array so a bad line never leaves the live list half-updated.
-bool portfolioSymbolValid(const char* symbol) {
+static bool portfolioSymbolValid(const char* symbol) {
     if (!symbol || !*symbol) return false;
     for (const char* c = symbol; *c; c++) {
         const bool alnum = (*c >= 'A' && *c <= 'Z') || (*c >= 'a' && *c <= 'z') ||

@@ -13,7 +13,7 @@ const int FXURL_MAX = 96;
 struct Settings {
     uint8_t  rotation;        // 0 or 2 — the two landscape orientations
     uint8_t  brightness;      // 0-255, applied at boot
-    uint8_t  defaultView;     // 0 positions, 1 detail, 2 portfolio, 3 chart
+    uint8_t  defaultView;     // 0 positions, 1 detail, 2 portfolio, 3 allocation, 4 loan
     // 0 = never show amounts, 1 = reveal for a few seconds on a USER tap,
     // 2 = always on screen. A percentage hides magnitude, and magnitude is
     // usually the thing you would actually react to.
@@ -48,8 +48,6 @@ extern Settings settings;
 void settingsBegin();          // load from NVS, falling back to config.h defaults
 void settingsSave();           // persist the current struct
 void settingsResetDefaults();  // back to config.h values, persisted
-void settingsClamp();          // force every field into a sane range
-
 // Applies a single "key=value" pair, clamping as needed. Returns false and
 // leaves the setting untouched if the key is unknown or the value unusable.
 bool settingsApply(const char* key, const char* value);
@@ -60,10 +58,6 @@ const char* settingsLastError();
 // midnight handled. A zero-length window is "never", never "always" — the
 // difference matters, because the degenerate case is a blank display.
 bool settingsInNightWindow(int minute, int startMin, int endMin);
-
-// Parses "HH:MM" (what <input type="time"> submits) or a plain minute count.
-// Returns false rather than guessing at anything else.
-bool settingsParseMinuteOfDay(const char* v, uint16_t* out);
 
 // Boots since first flash. A reboot loop is otherwise indistinguishable from a
 // device that is simply slow to fetch, which is exactly the ambiguity that made

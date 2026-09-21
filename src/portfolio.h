@@ -129,7 +129,6 @@ const size_t POSITION_TEXT_MAX = POSITION_MAX * POSITION_LINE_MAX + 1;
 // only visible result would be a confusing HTTP error against a symbol that
 // looks fine on screen. Letters, digits, '.', '-', '^' and '=' cover every
 // Yahoo form: SXR8.DE, BTC-USD, ^GSPC, GC=F.
-bool portfolioSymbolValid(const char* symbol);
 
 void portfolioBegin();
 bool portfolioSet(const char* text);

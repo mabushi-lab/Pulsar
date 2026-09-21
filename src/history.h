@@ -41,6 +41,5 @@ void historyFlush();
 uint32_t historyWrites();
 
 int             historyCount();
-const DayPoint* historyData();
 void            historyClear();
 

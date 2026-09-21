@@ -109,7 +109,7 @@ MarketPhase sessionPhase(const TradingSession& s, const struct tm& t) {
     return phaseAtMinute(s, t.tm_wday, t.tm_hour * 60 + t.tm_min);
 }
 
-uint32_t sessionRefreshMs(MarketPhase p) {
+static uint32_t sessionRefreshMs(MarketPhase p) {
     switch (p) {
         case PHASE_OPEN:            return settings.refreshOpenMs;
         case PHASE_PRE:

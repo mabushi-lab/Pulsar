@@ -23,15 +23,13 @@ void displayCycleBrightness();            // full (255) → dim (70) → off (0)
 // force until the schedule next has something to say. Call once a second.
 void    displayBrightnessTick();
 void    displayApplyScheduledBrightness();   // force now (settings just changed)
-uint8_t displayScheduledBrightness(int minuteOfDay);
-
 // ── OTA ───────────────────────────────────────────────────────────────────────
 // A firmware push blanks the screen for ~20 s; without this the device looks
 // dead at exactly the moment you most want to know it is alive.
 void drawOtaScreen(int pct, const char* note, bool error);
 
 // ── Views ─────────────────────────────────────────────────────────────────────
-// BOOT long-press cycles: positions → detail → portfolio → chart.
+// BOOT long-press cycles: positions → detail → portfolio → loan.
 // Allocation is not a stop on the BOOT cycle. It and Loan are two faces of the
 // same thing - the borrowed, targeted sleeve of funds - so USER flips between
 // them and BOOT treats the pair as one destination. Five screens, four stops.
@@ -42,7 +40,7 @@ DisplayView displayView();
 void        displayNextView();
 
 // USER short-press means "next" within a view: next page, next position,
-// reveal amounts, or next chart range.
+// reveal amounts, or flip between Loan and Allocation.
 void displayUserAction();
 
 int  displayDetailIndex();

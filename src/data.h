@@ -38,7 +38,6 @@ const TradingSession* sessionForSymbol(const char* symbol);
 MarketPhase phaseAtMinute(const TradingSession& s, int wday, int minute);
 MarketPhase sessionPhase(const TradingSession& s, const struct tm& t);
 
-uint32_t sessionRefreshMs(MarketPhase p);
 uint32_t marketsRefreshMs();   // fastest rate any position's session calls for
 
 // True when every held position's venue is shut right now. The day change is

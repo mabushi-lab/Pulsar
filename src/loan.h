@@ -38,22 +38,4 @@ LoanState loanCompute();
 // it has produced three times already. Writes a comma-separated list of the
 // unmatched names and returns how many there were.
 int loanUnmatchedSymbols(char* out, size_t n);
-bool      loanFunds(const char* symbol);   // is this position bought with the loan?
-
-// ── Pure helpers, exposed for testing ─────────────────────────────────────────
-// Days since 1970-01-01 for a civil date. Proleptic Gregorian, valid far beyond
-// anything a loan schedule will reach.
-long loanDaysFromCivil(int y, int m, int d);
 bool loanParseDate(const char* s, int* y, int* m, int* d);
-
-// Fills daysAgo[] with the age in days of every tranche drawn on or before
-// `today`, oldest first, and returns how many. daysToNext receives the wait for
-// the next undrawn tranche, or -1 when the schedule is complete.
-int loanSchedule(long today, int y, int m, int d, int intervalMonths,
-                 int totalTranches, long* daysAgo, int cap, int* daysToNext);
-
-// What `n` tranches are worth today at a compounding annual rate. This is the
-// loan balance; with the rate solved for instead, it is the money-weighted
-// return of the same schedule - which is what makes the two comparable.
-double loanCompound(double tranche, const long* daysAgo, int n, double annualPct);
-double loanImpliedRate(double target, double tranche, const long* daysAgo, int n);
