@@ -92,9 +92,9 @@ void setup() {
     wifiBegin();
     wifiWaitConnected(20000);   // the splash already says "Connecting..."
     timeBegin();
-    setupServer();
-
-    otaBegin();
+    setupServer();   // starts mDNS, records the address and starts OTA if Wi-Fi
+                      // made it within the wait above; loop() retries all three
+                      // on the next Wi-Fi-up transition if it didn't
     watchdogBegin();   // last: everything above is allowed to take its time
     animShowAddress();
     displaySetView((DisplayView)settings.defaultView);
@@ -128,7 +128,7 @@ void loop() {
     const bool wifiOk = wifiConnected();
     if (wifiOk != wifiWas) {
         wifiWas = wifiOk;
-        if (wifiOk) animRevealMain();
+        if (wifiOk) { animRevealMain(); networkOnWifiUp(); }
         else        drawHeader();
     }
 
@@ -156,10 +156,13 @@ void loop() {
         marketsStartCycle();
     }
 
-    // FX only when something is actually quoted in another currency, and only
-    // when no cycle is in flight so one pass never performs two blocking
-    // requests back to back. An all-EUR portfolio never makes this request.
-    if (!marketsCycleActive() && portfolioNeedsFx() && fxNeedsRefresh(now)) {
+    // FX when something is actually quoted in another currency, or a base-
+    // currency change on the settings page asked for one - and only when no
+    // cycle is in flight so one pass never performs two blocking requests back
+    // to back. An all-EUR portfolio never makes this request on its own.
+    if (!marketsCycleActive() &&
+        (fxFetchRequested || (portfolioNeedsFx() && fxNeedsRefresh(now)))) {
+        fxFetchRequested = false;
         fxFetch();
         displayRefreshAll();
     }

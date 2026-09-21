@@ -442,12 +442,19 @@ void drawHeader() {
                                    : C_WIFI_ERR);
 
     const PortfolioTotals t = portfolioTotals();
+    lcd.setTextDatum(lgfx::middle_right);
     if (t.valid) {
         char day[16];
         fmtPct(day, sizeof(day), t.dayChangePct, 2);
         lcd.setTextColor(t.anyStale ? C_DATE : (t.dayChangePct >= 0 ? C_UP : C_DOWN), C_HDR);
-        lcd.setTextDatum(lgfx::middle_right);
         lcd.drawString(day, W - 14, HDR_H / 2);
+    } else {
+        // Nothing priced yet reads identically to a broken header unless it
+        // says so - a fresh device with only watchlist rows, or one that just
+        // booted and has not completed its first fetch, would otherwise leave
+        // this corner blank with no way to tell "empty" from "broken".
+        lcd.setTextColor(C_MUTED, C_HDR);
+        lcd.drawString("--", W - 14, HDR_H / 2);
     }
 }
 
@@ -465,10 +472,16 @@ void drawPositionPanel(int slot) {
 
     const uint32_t now = millis();
     const bool flashing = (s_flashEnd[slot] > 0 && now < s_flashEnd[slot]);
+    // Text is drawn with an opaque background, so it has to match whatever the
+    // panel itself was just filled with - during the flash that is a lerped
+    // tint, not the resting C_PANEL, or every character sits in a mismatched
+    // box for the ~380ms of every single price update.
+    uint32_t panelBg = C_PANEL;
     if (flashing) {
         const uint32_t elapsed = now - s_flashStart[slot];
         const uint8_t t = (uint8_t)(255u - (elapsed * 255u) / FLASH_MS);
-        lcd.fillRect(x, y, w, ROW_H, lerpColor(C_PANEL, 0x112238, t));
+        panelBg = lerpColor(C_PANEL, 0x112238, t);
+        lcd.fillRect(x, y, w, ROW_H, panelBg);
         lcd.drawRect(x, y, w, ROW_H, lerpColor(C_PANEL, 0x2A5A8A, t));
     } else {
         lcd.fillRect(x, y, w, ROW_H, C_PANEL);
@@ -476,7 +489,7 @@ void drawPositionPanel(int slot) {
 
     lcd.setFont(&fonts::Font2);
     lcd.setTextSize(1);
-    lcd.setTextColor(p.accent, C_PANEL);
+    lcd.setTextColor(p.accent, panelBg);
     lcd.setTextDatum(lgfx::top_left);
     lcd.drawString(p.label, x + 4, y + 2);
 
@@ -484,13 +497,13 @@ void drawPositionPanel(int slot) {
     if (!positionIsHeld(p)) lcd.drawCircle(x + w - 7, y + 8, 3, C_LABEL);
 
     if (!p.fetched) {
-        lcd.setTextColor(C_MUTED, C_PANEL);
+        lcd.setTextColor(C_MUTED, panelBg);
         lcd.setTextDatum(lgfx::middle_center);
         lcd.drawString("...", cx, y + ROW_H / 2);
         return;
     }
     if (!p.ok) {
-        lcd.setTextColor(C_DOWN, C_PANEL);
+        lcd.setTextColor(C_DOWN, panelBg);
         lcd.setTextDatum(lgfx::middle_center);
         lcd.drawString("no price", cx, y + ROW_H / 2);
         return;
@@ -499,7 +512,7 @@ void drawPositionPanel(int slot) {
     char priceBuf[14];
     fmtPrice(priceBuf, sizeof(priceBuf), p.price);
     lcd.setFont(&fonts::Font4);
-    lcd.setTextColor(p.stale ? C_DATE : C_PRICE, C_PANEL);
+    lcd.setTextColor(p.stale ? C_DATE : C_PRICE, panelBg);
     lcd.setTextDatum(lgfx::top_center);
     lcd.drawString(priceBuf, cx, y + 18);
 
@@ -507,7 +520,7 @@ void drawPositionPanel(int slot) {
     char changeBuf[12];
     fmtPct(changeBuf, sizeof(changeBuf), dayPct, 2);
     lcd.setFont(&fonts::Font2);
-    lcd.setTextColor(p.stale ? C_MUTED : (dayPct >= 0 ? C_UP : C_DOWN), C_PANEL);
+    lcd.setTextColor(p.stale ? C_MUTED : (dayPct >= 0 ? C_UP : C_DOWN), panelBg);
     lcd.setTextDatum(lgfx::top_center);
     lcd.drawString(changeBuf, cx, y + 46);
 
@@ -830,16 +843,24 @@ void drawAllocation() {
     const PortfolioTotals t = portfolioTotals();
 
     // Collect the targeted sleeve in the order the editor lists it, so the rows
-    // match what you typed rather than a ranking that moves under you.
+    // match what you typed rather than a ranking that moves under you. Only the
+    // first GRID_SLOTS are drawn as rows - the screen only has room for six -
+    // but that cap must never reach the worst-drift figure below: this screen
+    // and the portfolio overview (worstDriftIndex(), unbounded) have to agree
+    // on which fund is worst, or a 7th+ targeted fund could be silently absent
+    // from both its own row and the one figure meant to catch a bad drift.
     int idx[GRID_SLOTS];
-    int n = 0;
-    for (int i = 0; i < positionCount && n < GRID_SLOTS; i++)
-        if (positionIsHeld(positions[i]) && positions[i].target > 0 && positions[i].ok)
-            idx[n++] = i;
+    int n = 0, totalTargeted = 0;
+    for (int i = 0; i < positionCount; i++) {
+        if (!positionIsHeld(positions[i]) || positions[i].target <= 0 || !positions[i].ok) continue;
+        totalTargeted++;
+        if (n < GRID_SLOTS) idx[n++] = i;
+    }
 
-    char meta[28];
-    if (n == 0) snprintf(meta, sizeof(meta), "no targets");
-    else        snprintf(meta, sizeof(meta), "%d funds", n);
+    char meta[40];
+    if (n == 0)                    snprintf(meta, sizeof(meta), "no targets");
+    else if (totalTargeted > n)    snprintf(meta, sizeof(meta), "%d of %d funds", n, totalTargeted);
+    else                           snprintf(meta, sizeof(meta), "%d funds", totalTargeted);
     lcd.setTextColor(C_LABEL, C_BG);
     lcd.setTextDatum(lgfx::top_right);
     lcd.drawString(meta, W - 6, y + 6);
@@ -884,15 +905,23 @@ void drawAllocation() {
     if (barX > 132) barX = 132;      // always leave the bar something to say
     const int barW = 220 - barX;
 
-    int worst = -1;
-    double worstMag = 0;
+    // The worst-drift figure below has to come from the same, unbounded scan
+    // worstDriftIndex() already does for the portfolio overview - not from just
+    // the rows drawn here - or a 7th+ targeted fund could be the one that most
+    // needs rebalancing and never appear in either place.
+    const int worst = worstDriftIndex(t);
+    double worstMag = 0.0;
+    if (worst >= 0) {
+        const double d = positionDriftPct(positions[worst], t);
+        worstMag = d < 0 ? -d : d;
+    }
+
     for (int k = 0; k < n; k++) {
         const Position& p = positions[idx[k]];
         const double actual = positionSleevePct(p, t);
         const double target = positionTargetPct(p, t);
         const double drift  = actual - target;
         const double mag    = drift < 0 ? -drift : drift;
-        if (mag > worstMag) { worstMag = mag; worst = idx[k]; }
 
         const int ry = rowTop + k * rowH + rowH / 2;
         const uint32_t tone = (mag >= 2.0) ? 0xFFAA00 : C_ACCENT;
@@ -1061,6 +1090,19 @@ static const char* phaseName(MarketPhase p) {
     }
 }
 
+// MarketPhase's declaration order (CLOSED, PRE, OPEN, POST) is a data-model
+// convenience, not a business ranking - comparing it directly picked POST over
+// OPEN. Between 17:30 and 20:00 CET that named a Xetra position's after-hours
+// session over a still-open regional one as "most active".
+static int phaseActivity(MarketPhase p) {
+    switch (p) {
+        case PHASE_OPEN: return 3;
+        case PHASE_PRE:  return 2;
+        case PHASE_POST: return 1;
+        default:         return 0;   // PHASE_CLOSED
+    }
+}
+
 // The bar describes the instrument on screen; in the grid it describes the one
 // whose session is most active, so it is never claiming "closed" while
 // something on the page is trading.
@@ -1076,7 +1118,7 @@ static const TradingSession& displayedSession() {
         for (int i = 1; i < positionCount; i++) {
             const TradingSession* s = positions[i].session ? positions[i].session : &SESSION_EQUITY;
             const MarketPhase ph = phaseAtMinute(*s, t.tm_wday, t.tm_hour * 60 + t.tm_min);
-            if (ph > bestPhase) { bestPhase = ph; best = s; }
+            if (phaseActivity(ph) > phaseActivity(bestPhase)) { bestPhase = ph; best = s; }
         }
         return *best;
     }

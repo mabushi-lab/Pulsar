@@ -53,7 +53,7 @@ AAPL,0,0,Apple
 
 Use the Yahoo Finance symbol for the listing you actually bought. Positions live in NVS flash, so a trade means editing a form, not reflashing.
 
-> **Use a dot for decimals.** The comma separates fields, so `51,59` is rejected with an explanation rather than silently read as `51`. A purely numeric label is rejected for the same reason.
+> **Use a dot for decimals.** The comma separates fields, so `51,59` is rejected with an explanation rather than silently read as `51`. A purely numeric label is rejected for the same reason, and a label may not contain `<` - it is later written straight into the web app's own page, and that is the one character that could hijack it.
 
 ### Currency, and what the return figure actually means
 
@@ -160,6 +160,8 @@ Targets are renormalised by their own sum, so a list adding to 95 or 105 still c
 
 The bottom line gives the amount that would bring the worst-drifted fund back to target, in the base currency when amounts are visible. The web app lists that amount per fund.
 
+The device screen only has room to draw six funds; a targeted sleeve larger than that shows "N of M funds" so the gap is visible rather than silent, and the rebalance hint is always computed over every targeted fund, not just the ones drawn - a fund that does not fit on screen can still be the one it names. The web app's own Allocation table has no such limit and always lists every targeted fund.
+
 ### Catching a bad setup
 
 The dashboard warns, in place rather than in a diagnostics table, when a symbol in the loan list matches no position. A typo there silently drops a holding from every loan figure while the screen goes on looking entirely healthy - which is this device's worst failure mode and the one it has produced most often. It also flags targets that add up far from 100.
@@ -243,7 +245,7 @@ The **Fetching** section of the web app shows the same state without a serial ca
 - `no price - HTTP 404` means Yahoo does not serve that symbol on that venue. Check it resolves at `finance.yahoo.com/quote/<SYMBOL>`.
 - `HTTP 429` means rate limiting - raise the open-market interval in Settings.
 - `some positions excluded - no FX rate` means the rates table has no entry for a position's currency; check the FX line in the diagnostics.
-- An **OTA push that cannot find the device** usually means mDNS is not resolving; use the IP shown in the diagnostics instead of `pulsar.local`. `Authentication Failed` means `OTA_PASSWORD` and `--auth=` disagree. The OTA listener only starts if Wi-Fi was up at boot, so a device that came up offline needs a restart once it is on the network.
+- An **OTA push that cannot find the device** usually means mDNS is not resolving; use the IP shown in the diagnostics instead of `pulsar.local`. `Authentication Failed` means `OTA_PASSWORD` and `--auth=` disagree. mDNS and OTA start as soon as Wi-Fi comes up, whether that happens within the boot splash's wait or later — a device that came up before its own router did no longer needs a restart once it joins the network.
 - **The screen is dark at night and you did not expect it**: night dimming is on by default from 23:00 to 07:00. Turn it off, or move the window, in Settings. A BOOT press brings it back until the next scheduled change.
 
 ## Project structure

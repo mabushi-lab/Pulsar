@@ -111,15 +111,22 @@ static double loanImpliedRate(double target, double tranche, const long* daysAgo
 }
 
 // ── Which positions the loan bought ───────────────────────────────────────────
+// Matches portfolio.cpp's own trim(): a symbol pasted into the loan-symbols
+// field can carry a tab or a stray \r same as one pasted into the positions
+// textarea, and the two tokenizers disagreeing on what counts as whitespace
+// would fail the match silently - exactly the "typo in the loan list" failure
+// this project already treats as its worst, most-repeated bug.
+static bool loanIsSpace(char c) { return c == ' ' || c == '\t' || c == '\r'; }
+
 static bool loanFunds(const char* symbol) {
     if (!symbol || !symbol[0]) return false;
     const char* p = settings.loanSymbols;
     while (*p) {
-        while (*p == ',' || *p == ' ') p++;
+        while (*p == ',' || loanIsSpace(*p)) p++;
         const char* start = p;
         while (*p && *p != ',') p++;
         size_t len = (size_t)(p - start);
-        while (len > 0 && start[len - 1] == ' ') len--;
+        while (len > 0 && loanIsSpace(start[len - 1])) len--;
         if (len > 0 && strlen(symbol) == len && strncasecmp(symbol, start, len) == 0)
             return true;
     }
@@ -133,11 +140,11 @@ int loanUnmatchedSymbols(char* out, size_t n) {
 
     const char* p = settings.loanSymbols;
     while (*p) {
-        while (*p == ',' || *p == ' ') p++;
+        while (*p == ',' || loanIsSpace(*p)) p++;
         const char* start = p;
         while (*p && *p != ',') p++;
         size_t len = (size_t)(p - start);
-        while (len > 0 && start[len - 1] == ' ') len--;
+        while (len > 0 && loanIsSpace(start[len - 1])) len--;
         if (len == 0) continue;
 
         bool found = false;

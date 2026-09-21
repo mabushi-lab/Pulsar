@@ -14,6 +14,7 @@
 #include <ESPmDNS.h>
 #include <time.h>
 #include <math.h>
+#include <string.h>
 
 // secrets.h is the user's own file and is gitignored, so a device flashed from
 // an older copy of it has no OTA_PASSWORD. Rather than failing to build, that
@@ -46,7 +47,8 @@
 
 // ── Globals ───────────────────────────────────────────────────────────────────
 WebServer server(80);
-bool      refreshRequested = false;
+bool      refreshRequested  = false;
+bool      fxFetchRequested  = false;
 
 // ── HTTP handlers ─────────────────────────────────────────────────────────────
 // ── Chunked-response guard ────────────────────────────────────────────────────
@@ -63,6 +65,28 @@ static void sendChunk(const char* c) {
 }
 
 static void endChunked() { server.sendContent(""); }
+
+// Everything below goes into an HTML page built with snprintf, not a template
+// engine, so nothing escapes '<' on its own. Labels are free text a user types
+// into the positions editor, and currency comes from the quote provider over a
+// connection this project deliberately does not certificate-pin (see README) —
+// both are attacker-reachable, on a page that is unauthenticated by default.
+// Every such string is run through this before it reaches a page buffer.
+static void htmlEscape(char* out, size_t outSize, const char* in) {
+    if (!out || !outSize) return;
+    size_t o = 0;
+    for (const char* c = in ? in : ""; *c && o + 6 < outSize; c++) {
+        switch (*c) {
+            case '&':  memcpy(out + o, "&amp;",  5); o += 5; break;
+            case '<':  memcpy(out + o, "&lt;",   4); o += 4; break;
+            case '>':  memcpy(out + o, "&gt;",   4); o += 4; break;
+            case '"':  memcpy(out + o, "&quot;", 6); o += 6; break;
+            case '\'': memcpy(out + o, "&#39;",  5); o += 5; break;
+            default:   out[o++] = *c; break;
+        }
+    }
+    out[o] = '\0';
+}
 
 // Returns false having already answered the request, so a handler's first line
 // can be `if (!mayAccess()) return;`.
@@ -106,7 +130,7 @@ a{color:#33CCFF}</style></head>
 A <b>quantity of 0</b> makes it a watchlist entry: priced and shown on the device,
 but left out of every total. An optional fifth field sets a <b>target allocation</b>
 in percent, which drives the drift figures above. Use a dot for decimals &mdash;
-the comma separates fields.<br>
+the comma separates fields, and a label may not contain &lt;.<br>
 Nothing is sent anywhere; positions are stored on the device and priced with public quotes.</p>
 <form method="POST" action="/positions">
 <textarea name="h" spellcheck="false">)HTML";
@@ -121,7 +145,13 @@ Nothing is sent anywhere; positions are stored on the device and priced with pub
     server.send(200, "text/html", "");
     sendChunk(HEAD);
 
-    char buf[720];
+    // Static rather than stack-local: onRoot() only ever runs synchronously
+    // from server.handleClient() on the loop task, never reentrantly, and its
+    // scratch buffers alone summed to over 3.5KB of stack against an 8KB task -
+    // measured with -Wstack-usage after the HTML-escaping buffers below were
+    // added. Moving them to .bss removes that risk entirely rather than
+    // trimming it.
+    static char buf[720];
     const PortfolioTotals t = portfolioTotals();
 
     snprintf(buf, sizeof(buf),
@@ -162,14 +192,18 @@ Nothing is sent anywhere; positions are stored on the device and priced with pub
     {
         // Its own buffer, sized from its parts rather than borrowed from the
         // page buffer whose remaining room depends on what came before it.
-        char missing[120], warn[560];
+        static char missing[120], missingSafe[640], warn[960];
         const int nMissing = loanUnmatchedSymbols(missing, sizeof(missing));
         if (nMissing > 0) {
+            // The unmatched names come straight from the loanSymbols setting,
+            // which is free text - unlike a position's own symbol field, it is
+            // never restricted to a safe character set.
+            htmlEscape(missingSafe, sizeof(missingSafe), missing);
             snprintf(warn, sizeof(warn),
                 "<hr><p class=\"bad\"><b>Check your setup:</b> the loan list names %d symbol(s) "
                 "that are not in your positions &mdash; <b>%s</b>. They contribute nothing to the "
                 "loan figures, which are therefore understated. Fix the spelling under Loan in "
-                "<a href=\"/settings\">Settings</a>, or add the position.</p>", nMissing, missing);
+                "<a href=\"/settings\">Settings</a>, or add the position.</p>", nMissing, missingSafe);
             sendChunk(warn);
         }
 
@@ -299,21 +333,22 @@ Nothing is sent anywhere; positions are stored on the device and priced with pub
             // line - 42.5 actual, 50 target, 0.0 drift.
             const double d   = positionDriftPct(p, t);
             const double mag = d < 0 ? -d : d;
-            char act[16], tgt[16], drift[16], amt[28];
+            char act[16], tgt[16], drift[16], amt[28], label[64];
             fmtPct(act,   sizeof(act),   positionSleevePct(p, t), 1);
             fmtPct(tgt,   sizeof(tgt),   positionTargetPct(p, t), 1);
             fmtPct(drift, sizeof(drift), d, 1);
             stripPercent(drift);                        // points, not percent
             const double reb = positionRebalanceAmount(p, t);
             fmtMoney(amt, sizeof(amt), reb);
+            htmlEscape(label, sizeof(label), p.label);   // a user-typed label, not a symbol
 
-            char row[400];
+            static char row[400];
             snprintf(row, sizeof(row),
                 "<tr><td>%s</td><td class=\"num\">%s</td>"
                 "<td class=\"num dim\">%s</td>"
                 "<td class=\"num %s\">%s</td>"
                 "<td class=\"num %s\">%s%s %s</td></tr>",
-                p.label, act + 1, tgt + 1,
+                label, act + 1, tgt + 1,
                 mag >= 2.0 ? "warn" : "good", drift,
                 mag >= 0.5 ? "" : "dim", reb >= 0 ? "+" : "", amt, settings.baseCurrency);
             sendChunk(row);
@@ -327,14 +362,16 @@ Nothing is sent anywhere; positions are stored on the device and priced with pub
             for (int i = 0; i < positionCount; i++) {
                 const Position& p = positions[i];
                 if (!positionIsHeld(p) || !p.ok || p.target > 0) continue;
-                char w[16], row[240];
+                char w[16], label[64];
+                static char row[240];
                 fmtPct(w, sizeof(w), positionWeightPct(p, t), 1);
+                htmlEscape(label, sizeof(label), p.label);
                 if (!any) {
                     sendChunk("<p class=\"note\">Outside the targeted sleeve, as a share of the "
                               "whole book: ");
                     any = true;
                 }
-                snprintf(row, sizeof(row), "<b>%s</b> %s&nbsp; ", p.label, w + 1);
+                snprintf(row, sizeof(row), "<b>%s</b> %s&nbsp; ", label, w + 1);
                 sendChunk(row);
             }
             if (any) sendChunk("</p>");
@@ -360,7 +397,14 @@ Nothing is sent anywhere; positions are stored on the device and priced with pub
             else if (p.lastHttp == 0) { snprintf(state, sizeof(state), "not fetched yet"); cls = "warn"; }
             else                      { snprintf(state, sizeof(state), "no price - HTTP %d", p.lastHttp); }
 
-            char row[520];
+            char label[64], currency[32];
+            htmlEscape(label, sizeof(label), p.label);
+            // The currency code comes from the quote provider, not from a field
+            // this project restricts to a safe character set - see the note on
+            // htmlEscape() above.
+            htmlEscape(currency, sizeof(currency), p.currency);
+
+            static char row[520];
             if (p.ok) {
                 // Price and previous close side by side, because a portfolio
                 // day change that looks wrong is almost always one position
@@ -376,18 +420,19 @@ Nothing is sent anywhere; positions are stored on the device and priced with pub
                     "<td class=\"num dim\">%.4f</td>"
                     "<td class=\"num %s\">%s</td>"
                     "<td class=\"%s\">%s</td></tr>",
-                    p.symbol, p.label, positionIsHeld(p) ? "" : "watch",
-                    p.price, p.currency, p.prevClose,
+                    p.symbol, label, positionIsHeld(p) ? "" : "watch",
+                    p.price, currency, p.prevClose,
                     mag >= 5.0 ? "bad" : (dp >= 0 ? "good" : "warn"), dayBuf,
                     cls, state);
             } else snprintf(row, sizeof(row),
                 "<tr><td>%s</td><td class=\"dim\">%s</td><td class=\"num\">%s</td>"
                 "<td class=\"num\">&mdash;</td><td class=\"num\">&mdash;</td>"
                 "<td class=\"num\">&mdash;</td><td class=\"%s\">%s</td></tr>",
-                p.symbol, p.label, positionIsHeld(p) ? "" : "watch", cls, state);
+                p.symbol, label, positionIsHeld(p) ? "" : "watch", cls, state);
             sendChunk(row);
             if (p.ok && positionIsHeld(p)) {
-                char qty[240], retBuf[16];
+                static char qty[240];
+                char retBuf[16];
                 fmtPct(retBuf, sizeof(retBuf), positionReturnPct(p), 1);
                 snprintf(qty, sizeof(qty),
                     "<tr><td class=\"dim\"></td><td class=\"dim\">%.10g units</td>"
@@ -403,7 +448,7 @@ Nothing is sent anywhere; positions are stored on the device and priced with pub
 
     sendChunk(FORM);
 
-    char current[POSITION_TEXT_MAX];
+    static char current[POSITION_TEXT_MAX];
     if (!portfolioSerialize(current, sizeof(current)))
         Serial.printf("[pf]    warning: position list did not fit the editor buffer\n");
     sendChunk(current);
@@ -418,7 +463,7 @@ static void onPositions() {
     if (!server.hasArg("h")) { server.send(400, "text/plain", "missing field"); return; }
 
     const String body = server.arg("h");
-    char result[560];
+    static char result[700];
 
     if (portfolioSet(body.c_str())) {
         snprintf(result, sizeof(result),
@@ -431,12 +476,17 @@ static void onPositions() {
         refreshRequested = true;   // price the new positions straight away
         server.send(200, "text/html", result);
     } else {
+        // A rejected line is quoted back in its own error - e.g. an invalid
+        // symbol - so the message itself can carry whatever the submitter
+        // typed. Escape it before it goes anywhere near the page.
+        static char safeErr[400];
+        htmlEscape(safeErr, sizeof(safeErr), portfolioLastError());
         snprintf(result, sizeof(result),
             "<!DOCTYPE html><html><head><title>Pulsar</title>"
             "<style>body{background:#06080F;color:#FF3344;font-family:monospace;"
             "max-width:520px;margin:40px auto;padding:20px}a{color:#33CCFF}</style></head>"
             "<body>Not saved: %s<br><br><a href=\"/\">Back</a></body></html>",
-            portfolioLastError());
+            safeErr);
         server.send(400, "text/html", result);
     }
 }
@@ -468,7 +518,9 @@ a{color:#33CCFF}</style></head>
     server.send(200, "text/html", "");
     sendChunk(HEAD);
 
-    char buf[860];
+    // Static for the same reason as onRoot()'s buf: this handler is never
+    // reentrant, and its scratch buffers measured over 2KB of stack.
+    static char buf[1200];
 
     snprintf(buf, sizeof(buf),
         "<label>Orientation<select name=\"rot\">"
@@ -546,22 +598,38 @@ a{color:#33CCFF}</style></head>
         LOAN_TRANCHE_MAX, settings.loanTranches, (double)settings.loanRatePct);
     sendChunk(buf);
 
-    snprintf(buf, sizeof(buf),
-        "<label>Positions the loan funded<input name=\"lSyms\" value=\"%s\"></label>"
-        "<p class=\"note\">Comma-separated symbols. Anything left out is treated as your own "
-        "money and stays out of the loan figures.</p><hr>",
-        settings.loanSymbols);
-    sendChunk(buf);
+    {
+        // Unlike a position's symbol, this field is never restricted to a safe
+        // character set - it only feeds a substring comparison - so it is
+        // escaped before it goes into a value="" attribute it could otherwise
+        // break out of.
+        static char loanSyms[512];
+        htmlEscape(loanSyms, sizeof(loanSyms), settings.loanSymbols);
+        snprintf(buf, sizeof(buf),
+            "<label>Positions the loan funded<input name=\"lSyms\" value=\"%s\"></label>"
+            "<p class=\"note\">Comma-separated symbols. Anything left out is treated as your own "
+            "money and stays out of the loan figures.</p><hr>",
+            loanSyms);
+        sendChunk(buf);
+    }
 
-    snprintf(buf, sizeof(buf),
-        "<div class=\"row\">"
-        "<label>Base currency<input name=\"ccy\" value=\"%s\" maxlength=\"4\"></label>"
-        "<label>Timezone (POSIX TZ)<input name=\"tz\" value=\"%s\"></label></div>"
-        "<label>Exchange-rate URL<input name=\"fxurl\" value=\"%s\"></label>"
-        "<p class=\"note\">Everything is converted into the base currency using ECB reference "
-        "rates, so a mixed EUR/USD portfolio totals correctly. Rates move once a day.</p><hr>",
-        settings.baseCurrency, settings.tz, settings.fxUrl);
-    sendChunk(buf);
+    {
+        // Neither field is character-restricted at save time (tz is a POSIX
+        // rule string, fxurl only has to start with "https://"), so both are
+        // escaped before landing in a value="" attribute.
+        static char tz[256], fxurl[512];
+        htmlEscape(tz,    sizeof(tz),    settings.tz);
+        htmlEscape(fxurl, sizeof(fxurl), settings.fxUrl);
+        snprintf(buf, sizeof(buf),
+            "<div class=\"row\">"
+            "<label>Base currency<input name=\"ccy\" value=\"%s\" maxlength=\"4\"></label>"
+            "<label>Timezone (POSIX TZ)<input name=\"tz\" value=\"%s\"></label></div>"
+            "<label>Exchange-rate URL<input name=\"fxurl\" value=\"%s\"></label>"
+            "<p class=\"note\">Everything is converted into the base currency using ECB reference "
+            "rates, so a mixed EUR/USD portfolio totals correctly. Rates move once a day.</p><hr>",
+            settings.baseCurrency, tz, fxurl);
+        sendChunk(buf);
+    }
 
     snprintf(buf, sizeof(buf),
         "<p class=\"note\">Refresh intervals, in seconds. A cycle is one request per position, "
@@ -606,39 +674,50 @@ static void onSettingsSave() {
         return;
     }
 
-    // Every field goes through settingsApply(), which validates; the first bad
-    // value aborts before anything is persisted.
+    // Every field goes through settingsApply(), which validates one key at a
+    // time and mutates the live `settings` struct as it goes. A form posts every
+    // field in one request, so a bad value on, say, the 15th key used to leave
+    // the first 14 already changed in RAM - live on screen and in every
+    // fxConvert() from that moment - while the page reported "Not saved" and
+    // NVS kept the old values. Worst case, a base-currency change would take
+    // effect without the matching fxFetch() below ever running, so every
+    // conversion after it silently used rates keyed to the wrong base. Taking a
+    // full backup first and restoring it on any failure makes the whole POST
+    // atomic: every key applies, or none of them visibly do.
     static const char* KEYS[] = { "rot","bri","view","amt","nDim","nBri","nStart","nEnd",
                                   "lStart","lAmt","lIvl","lN","lRate","lSyms","ccy","fxurl","tz","rOpen","rEdge","rShut" };
-    const uint8_t oldRotation   = settings.rotation;
-    const uint8_t oldBrightness = settings.brightness;
-    char tzBefore[TZ_MAX], ccyBefore[CCY_MAX];
-    strncpy(tzBefore,  settings.tz,           TZ_MAX - 1);  tzBefore[TZ_MAX - 1] = '\0';
-    strncpy(ccyBefore, settings.baseCurrency, CCY_MAX - 1); ccyBefore[CCY_MAX - 1] = '\0';
+    static Settings backup;
+    backup = settings;
 
     for (size_t i = 0; i < sizeof(KEYS) / sizeof(KEYS[0]); i++) {
         if (!server.hasArg(KEYS[i])) continue;
         if (!settingsApply(KEYS[i], server.arg(KEYS[i]).c_str())) {
-            char err[360];
+            settings = backup;   // undo whatever earlier keys in this POST already changed
+            static char safeErr[200], err[512];
+            htmlEscape(safeErr, sizeof(safeErr), settingsLastError());
             snprintf(err, sizeof(err),
                 "<!DOCTYPE html><html><head><title>Pulsar</title>"
                 "<style>body{background:#06080F;color:#FF3344;font-family:monospace;margin:40px}"
                 "a{color:#33CCFF}</style></head><body>Not saved: %s<br><br>"
-                "<a href=\"/settings\">Back</a></body></html>", settingsLastError());
+                "<a href=\"/settings\">Back</a></body></html>", safeErr);
             server.send(400, "text/html", err);
             return;
         }
     }
     settingsSave();
 
-    if (settings.rotation != oldRotation) displayApplyRotation();
+    if (settings.rotation != backup.rotation) displayApplyRotation();
     // Cheap, and it resolves the case the old code got wrong: a brightness
     // change made during the night window must not light the panel back up.
-    (void)oldBrightness;
     displayApplyScheduledBrightness();
-    if (strncmp(tzBefore, settings.tz, TZ_MAX) != 0) timeBegin();
-    // A new base currency invalidates the cached table's base, so refetch.
-    if (strncmp(ccyBefore, settings.baseCurrency, CCY_MAX) != 0) fxFetch();
+    if (strncmp(backup.tz, settings.tz, TZ_MAX) != 0) timeBegin();
+    // A new base currency invalidates the cached table's base, so refetch - but
+    // not from here. fxFetch() is a blocking HTTPS call (up to ~16s on a slow or
+    // unreachable endpoint) and this handler runs on the same task as loop(), so
+    // calling it inline would freeze buttons, the display and the watchdog feed
+    // for the duration. Flag it instead and let loop()'s already-gated fxFetch()
+    // path pick it up, exactly as a manual refresh defers to marketsStartCycle().
+    if (strncmp(backup.baseCurrency, settings.baseCurrency, CCY_MAX) != 0) fxFetchRequested = true;
     displayRefreshAll();
 
     server.send(200, "text/html",
@@ -722,11 +801,14 @@ void watchdogFeed() { if (s_wdtOn) esp_task_wdt_reset(); }
 // ── OTA ───────────────────────────────────────────────────────────────────────
 static bool s_otaActive = false;
 static int  s_otaPct    = -1;
+static bool s_otaBegun  = false;   // guards ArduinoOTA.begin() against running twice
 
 bool otaInProgress() { return s_otaActive; }
 
 void otaBegin() {
+    if (s_otaBegun) return;
     if (!wifiConnected()) { Serial.printf("[ota]   no Wi-Fi; OTA not started\n"); return; }
+    s_otaBegun = true;
 
     ArduinoOTA.setHostname(MDNS_HOST);
     if (OTA_PASSWORD[0]) {
@@ -757,6 +839,11 @@ void otaBegin() {
     });
     ArduinoOTA.onError([](ota_error_t err) {
         s_otaActive = false;
+        // onStart() disarmed the watchdog for the write; a failed update must
+        // not leave it that way, or the device runs the rest of its uptime with
+        // watchdogFeed() a silent no-op - exactly the hung-task case the
+        // watchdog exists to catch.
+        if (!s_wdtOn && esp_task_wdt_add(nullptr) == ESP_OK) s_wdtOn = true;
         char note[40];
         snprintf(note, sizeof(note), "error %d", (int)err);
         drawOtaScreen(-1, note, true);
@@ -777,18 +864,36 @@ static char s_host[32] = MDNS_HOST ".local";
 const char* deviceAddress()  { return s_addr; }
 const char* deviceHostname() { return s_host; }
 
-void setupServer() {
-    // mDNS means the usual answer to "what's its IP?" is "you don't need it".
-    if (wifiConnected()) {
+// mDNS, the address string and OTA all need Wi-Fi up to start, and setup()
+// only tries once, after a bounded 20s wait behind the boot splash. A device
+// that powers on before its own router is ready - both coming up together is
+// an ordinary event, not a rare one - would otherwise lose all three for the
+// rest of its uptime: wifiMaintain() reconnects it seconds later, but nothing
+// else was ever called again. This runs from setup() if Wi-Fi is already up,
+// and again from loop() on the next Wi-Fi-up transition if it wasn't - the IP
+// string refreshes every time in case DHCP handed out a new one, while mDNS
+// and OTA are one-time work, guarded further down.
+void networkOnWifiUp() {
+    if (!wifiConnected()) return;
+    snprintf(s_addr, sizeof(s_addr), "%s", WiFi.localIP().toString().c_str());
+    Serial.printf("[net]   http://%s/\n", s_addr);
+
+    static bool mdnsBegun = false;
+    if (!mdnsBegun) {
+        mdnsBegun = true;
         if (MDNS.begin(MDNS_HOST)) {
             MDNS.addService("http", "tcp", 80);
             Serial.printf("[net]   http://%s/\n", s_host);
         } else {
             Serial.printf("[net]   mDNS failed; use the IP\n");
         }
-        snprintf(s_addr, sizeof(s_addr), "%s", WiFi.localIP().toString().c_str());
-        Serial.printf("[net]   http://%s/\n", s_addr);
     }
+
+    otaBegin();   // idempotent: a no-op once it has already started
+}
+
+void setupServer() {
+    networkOnWifiUp();
 
     server.on("/",        HTTP_GET,  onRoot);
     server.on("/refresh",  HTTP_POST, onRefresh);

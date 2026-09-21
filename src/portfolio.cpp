@@ -202,6 +202,23 @@ static bool portfolioSymbolValid(const char* symbol) {
     return true;
 }
 
+// A label is free text, and it is later written verbatim into the web app's
+// HTML - inside a table cell and inside a <textarea> that echoes the whole
+// position list back for editing. Only '<' can open a tag (including
+// "</textarea>", which would spill the rest of the page into a live editor
+// field), so it is the one character actually refused here - not every
+// control byte trim() leaves untouched in the middle of a string. Positions
+// load through this same check at boot, so a stricter rule would risk a
+// device upgrading from an older firmware failing to load an already-stored
+// label it never used to reject, and doing that on an editor whose textarea
+// is populated from RAM turns "one label needs fixing" into "every position
+// vanished, with nothing left on screen to fix". A single, narrow, actually-
+// dangerous character keeps that risk to the case that was never safe.
+static bool portfolioLabelValid(const char* label) {
+    for (const char* c = label; *c; c++) if (*c == '<') return false;
+    return true;
+}
+
 static bool parseInto(const char* text, Position* out, int* outCount, char* err, size_t errN) {
     int count = 0, lineNo = 0;
     const char* p = text;
@@ -293,6 +310,10 @@ static bool parseInto(const char* text, Position* out, int* outCount, char* err,
                          "line %d: '%s,%s' looks like a decimal comma - use a dot, "
                          "or give the label a non-numeric name",
                          lineNo, shownCost, shownLabel);
+                return false;
+            }
+            if (!portfolioLabelValid(label)) {
+                snprintf(err, errN, "line %d: a label cannot contain '<'", lineNo);
                 return false;
             }
             strncpy(q.label, label, LABEL_MAX - 1);

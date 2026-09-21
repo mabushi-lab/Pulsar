@@ -4,6 +4,7 @@
 
 extern WebServer server;
 extern bool      refreshRequested;
+extern bool      fxFetchRequested;   // set by the settings page; fxFetch() itself is blocking
 
 // ── Wi-Fi ─────────────────────────────────────────────────────────────────────
 void wifiBegin();                             // non-blocking: starts associating
@@ -35,6 +36,11 @@ void watchdogFeed();
 
 // ── Web ───────────────────────────────────────────────────────────────────────
 void setupServer();
+
+// Starts mDNS, records the current address, and starts OTA - all of which need
+// Wi-Fi up. Called once from setupServer() and again on every later Wi-Fi-up
+// transition, since the one at boot can miss a router that is still coming up.
+void networkOnWifiUp();
 
 // "pulsar.local" plus the dotted IP, for the boot screen and the web page.
 const char* deviceAddress();
