@@ -26,6 +26,13 @@ struct LoanState {
     double equity;          // value - owed: what is left after repaying today
     double ratePct;         // the loan's annual rate
     double returnPct;       // the rate the investments actually achieved
+    // False makes returnPct a 0.0 placeholder, not a real 0% return:
+    // loanImpliedRate() cannot solve a rate with nothing priced (no
+    // loan-funded position currently held or priced) or with no time yet
+    // elapsed (the most recent tranche was drawn today). A caller comparing
+    // returnPct against the loan's own rate must check this first, or a
+    // fresh drawdown reads as "the investment is already underperforming".
+    bool   returnKnown;
     bool   anyUnconverted;  // a position excluded for want of an FX rate
     bool   anyUnpriced;
 };

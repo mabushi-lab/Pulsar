@@ -1137,6 +1137,13 @@ void drawLoan() {
     } else if (L.anyUnpriced) {
         lcd.setTextColor(C_MUTED, C_BG);
         lcd.drawString("waiting for prices", cx, y + h - 10);
+    } else if (!L.returnKnown) {
+        // A 0.0 here is loanImpliedRate()'s "cannot solve this yet" sentinel,
+        // not a real 0% return - the most recent tranche was drawn today, or
+        // nothing it bought is currently priced. Showing it as a red "0%
+        // return" would read as an instant, implausible loss.
+        lcd.setTextColor(C_MUTED, C_BG);
+        lcd.drawString("too soon to tell what the loan-funded return is", cx, y + h - 10);
     } else {
         char ret[16], cost[16], spread[48];
         fmtPct(ret,  sizeof(ret),  L.returnPct, 1);

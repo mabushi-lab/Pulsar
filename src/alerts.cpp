@@ -103,6 +103,80 @@ static bool checkLoanUnmatched() {
     return true;
 }
 
+// The Loan screen's own two numbers (display.cpp), alerted on rather than
+// only shown in colour. Equity going negative means the loan-funded
+// positions are now worth less than repaying the loan today would cost.
+// The spread going negative means the investments are earning less than the
+// loan costs - display.cpp's own comment already calls this "the number that
+// turns negative first", i.e. the earlier warning before equity itself goes
+// negative. Both hold their current state, rather than clearing to "fine",
+// when the inputs needed to judge them are missing or not yet meaningful -
+// the same reason checkDrift() does: a transient gap is not evidence the
+// underlying risk actually resolved. "Not configured", "nothing drawn yet",
+// or (defensively) nothing actually owed is the one case that is a real,
+// definitive "nothing at risk".
+static bool s_loanEquityBad = false;
+static bool s_loanSpreadBad = false;
+
+static bool checkLoanRisk() {
+    const LoanState L = loanCompute();
+
+    bool equityBad = s_loanEquityBad;
+    bool spreadBad = s_loanSpreadBad;
+
+    if (!L.configured || !L.valid || L.owed <= 0) {
+        equityBad = false;
+        spreadBad = false;
+    } else {
+        // A little hysteresis around each line, the same reason checkDrift()
+        // has one: a figure sitting right on the boundary should not flip a
+        // webhook on and off every cycle. Equity's margin is expressed as a
+        // percentage of what is owed, so the band means the same thing
+        // regardless of loan size.
+        if (!L.anyUnpriced && !L.anyUnconverted) {
+            const double equityMarginPct = (L.equity / L.owed) * 100.0;
+            if      (equityMarginPct <= 0.0) equityBad = true;
+            else if (equityMarginPct >  2.0) equityBad = false;
+        }
+
+        // Additionally gated on returnKnown: loanImpliedRate() returns a 0.0
+        // placeholder, not a real 0% return, right after a fresh drawdown or
+        // while nothing it bought is held/priced - comparing that placeholder
+        // against the loan's rate would misread "too soon to tell" as
+        // "already underperforming".
+        if (!L.anyUnpriced && !L.anyUnconverted && L.returnKnown) {
+            const double spread = L.returnPct - L.ratePct;
+            if      (spread <  0.0) spreadBad = true;
+            else if (spread >= 1.0) spreadBad = false;
+        }
+    }
+
+    if (equityBad != s_loanEquityBad) {
+        postWebhook(equityBad
+            ? "Pulsar: loan equity has gone negative - repaying the loan today would cost more than the loan-funded positions are worth."
+            : "Pulsar: loan equity is positive again.");
+        s_loanEquityBad = equityBad;
+        return true;
+    }
+
+    if (spreadBad != s_loanSpreadBad) {
+        char ret[16], rate[16];
+        fmtPct(ret,  sizeof(ret),  L.returnPct, 1);
+        fmtPct(rate, sizeof(rate), L.ratePct,   1);
+        stripPercent(rate);
+        char msg[144];
+        if (spreadBad) snprintf(msg, sizeof(msg),
+                                "Pulsar: the loan-funded return (%s) has dropped below the loan's cost (%s%%).",
+                                ret, rate + 1);
+        else           snprintf(msg, sizeof(msg), "Pulsar: the loan-funded return is back above its cost.");
+        postWebhook(msg);
+        s_loanSpreadBad = spreadBad;
+        return true;
+    }
+
+    return false;
+}
+
 // Per-position, unlike the three latches above: "which holding stopped pricing"
 // is the entire message, so a single shared latch could only ever say that
 // *something* is stale, which the Portfolio screen already does for free.
@@ -214,15 +288,21 @@ void alertsCheck() {
 
     // At most one webhook per call. Each is a blocking HTTPS POST - up to 8s
     // connect plus 8s read, the same budget fetchQuote() and fxFetch() already
-    // spend per request - and more than one of these four can plausibly change
-    // in the same cycle (a loan typo and a drift past target, say). Sending
-    // them all back to back would run past WDT_TIMEOUT_S (45s) and
+    // spend per request - and more than one of these conditions can plausibly
+    // change in the same cycle (a loan typo and a drift past target, say).
+    // Sending them all back to back would run past WDT_TIMEOUT_S (45s) and
     // panic-reboot, which resets every latch to false and fires the same
     // alerts again on the next boot: a reboot loop caused by the alerting
     // feature itself. One completed cycle is 15s-15min away, so the next
     // condition is never far behind.
+    //
+    // checkLoanRisk() sits after checkLoanUnmatched(): a loan-list typo
+    // already corrupts loanCompute()'s numbers, so that gets fixed-flagged
+    // first rather than alerting on a spread or an equity figure built from
+    // the wrong holdings.
     if (checkSuspect()) return;
     if (checkLoanUnmatched()) return;
+    if (checkLoanRisk()) return;
     if (checkStale()) return;
     checkDrift();
 }

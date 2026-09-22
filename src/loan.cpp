@@ -205,8 +205,17 @@ LoanState loanCompute() {
         L.cost  += c;
     }
 
-    L.equity    = L.value - L.owed;
-    L.returnPct = loanImpliedRate(L.value, settings.loanTranche, daysAgo, L.drawn);
-    L.valid     = true;
+    L.equity = L.value - L.owed;
+
+    // Mirrors loanImpliedRate()'s own two "cannot solve this" conditions
+    // (target <= 0, span <= 0) so a caller can tell "not yet knowable" apart
+    // from "computed as zero" without reaching into that function's internals.
+    long span = 0;
+    for (int i = 0; i < L.drawn; i++) span += daysAgo[i];
+    L.returnKnown = (L.value > 0) && (span > 0);
+    L.returnPct   = L.returnKnown
+        ? loanImpliedRate(L.value, settings.loanTranche, daysAgo, L.drawn)
+        : 0.0;
+    L.valid = true;
     return L;
 }

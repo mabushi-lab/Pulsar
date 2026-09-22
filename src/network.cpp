@@ -282,6 +282,14 @@ Nothing is sent anywhere; positions are stored on the device and priced with pub
             fmtMoney(va, sizeof(va), L.value);
             fmtPct(ret,  sizeof(ret),  L.returnPct, 2);
             fmtPct(rate, sizeof(rate), L.ratePct,   2);
+            // returnKnown false means loanImpliedRate() could not solve a rate
+            // yet - the most recent tranche was drawn today, or nothing it
+            // bought is held/priced - and L.returnPct is a 0.0 placeholder,
+            // not a real 0% return. Coloring that "bad" would read as an
+            // instant, implausible loss the moment a tranche lands.
+            char retCell[40];
+            if (L.returnKnown) snprintf(retCell, sizeof(retCell), "%s vs %s", ret, rate);
+            else               snprintf(retCell, sizeof(retCell), "too soon to tell");
             snprintf(buf, sizeof(buf),
                 "<hr><h2>Loan</h2><table>"
                 "<tr><td>Drawn so far</td><td class=\"num\">%s %s <span class=\"dim\">(%d of %d)</span></td></tr>"
@@ -296,10 +304,10 @@ Nothing is sent anywhere; positions are stored on the device and priced with pub
 
             snprintf(buf, sizeof(buf),
                 "<tr><td><b>Net equity</b></td><td class=\"num %s\"><b>%s %s</b></td></tr>"
-                "<tr><td>Return vs cost of borrowing</td><td class=\"num %s\">%s vs %s</td></tr>"
+                "<tr><td>Return vs cost of borrowing</td><td class=\"num %s\">%s</td></tr>"
                 "</table>",
                 L.equity >= 0 ? "good" : "bad", eq, settings.baseCurrency,
-                L.returnPct >= L.ratePct ? "good" : "bad", ret, rate);
+                L.returnKnown ? (L.returnPct >= L.ratePct ? "good" : "bad") : "dim", retCell);
             sendChunk(buf);
 
             sendChunk("<p class=\"note\">Net equity is what would be left after repaying today. "
